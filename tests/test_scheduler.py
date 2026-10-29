@@ -1,4 +1,5 @@
 import time
+from datetime import date
 
 from core.constraints import validate_request
 from core.scheduler import Assignment, solve
@@ -27,7 +28,8 @@ def test_tiny_solution_is_valid(tiny):
     assert r.ok
     assert validate(tiny, r.schedule, ST).hard_count == 0
     # 교수1 금요일 불가
-    assert not ((r.schedule["course_code"].isin(["A1", "A2"])) & (r.schedule["day"] == 4)).any()
+    fri = [k for k in range(ST.n_days) if ST.weekday(k) == 4]
+    assert not ((r.schedule["course_code"].isin(["A1", "A2"])) & (r.schedule["day"].isin(fri))).any()
 
 
 def test_request_is_respected(small_data):
@@ -36,7 +38,7 @@ def test_request_is_respected(small_data):
     row = r0.schedule[r0.schedule.exam_type == "별도"].iloc[0]
     code, day = row.course_code, int(row.day)
     req = {code: validate_request({
-        "unavailable": [{"day": "월화수목금"[day], "start": "09:00", "end": "18:00"}],
+        "unavailable": [{"day": ST.day_name(day), "start": "09:00", "end": "18:00"}],
         "preferred": [{"day": None, "start": "09:00", "end": "12:00"}],
     })}
     r1 = solve(small_data, ST, requests=req, previous=r0.schedule, focus={code})
@@ -52,7 +54,7 @@ def test_confirmed_exam_never_moves(small_data):
     conf = {row.course_code: Assignment(int(row.day), int(row.start), row.room_id)}
     # 확정 과목에 반대되는 요청이 있어도 확정이 우선 (요청은 다른 과목에)
     other = r0.schedule[r0.schedule.exam_type == "별도"].iloc[1]
-    req = {other.course_code: validate_request({"unavailable": [{"day": "월화수목금"[int(other.day)],
+    req = {other.course_code: validate_request({"unavailable": [{"day": ST.day_name(int(other.day)),
                                                                   "start": "09:00", "end": "18:00"}]})}
     r1 = solve(small_data, ST, requests=req, confirmed=conf, previous=r0.schedule, focus={other.course_code})
     assert r1.ok
@@ -114,7 +116,7 @@ def test_priority_department_wins_contested_slot():
     en = pd.DataFrame([dict(student_id=s, course_code=c) for s, c in [("S0", "X"), ("S1", "X"), ("S2", "Y"), ("S3", "Y")]])
     ds = Dataset(st_, co, pr, ro, en)
     for sem, winner in (("26-1", "X"), ("26-2", "Y")):   # 26-1 물리 1순위, 26-2 수학 1순위(물리 6순위)
-        r = solve(ds, Settings(semester=sem))
+        r = solve(ds, Settings(semester=sem, exam_start=date(2026, 12, 14), exam_end=date(2026, 12, 18)))
         s = r.schedule.set_index("course_code")
         got = [c for c in ("X", "Y") if int(s.loc[c, "day"]) == 2 and int(s.loc[c, "start"]) == H("09:00")]
         assert got == [winner], (sem, s)
@@ -125,3 +127,57 @@ def test_time_limit_respected(small_data):
     t = time.time()
     r = solve(small_data, st)
     assert time.time() - t < 15 and r.ok
+
+
+def test_exam_period_dates():
+    """기본 시험 기간 12/15(화)~12/21(월), 주말 제외 → 화 수 목 금 월 5일"""
+    st = Settings()
+    assert [d.isoformat() for d in st.exam_dates] == ["2026-12-15", "2026-12-16", "2026-12-17", "2026-12-18", "2026-12-21"]
+    assert [st.day_name(k) for k in range(st.n_days)] == ["화", "수", "목", "금", "월"]
+    assert st.date_label(4) == "12월 21일(월)"
+    assert Settings(include_weekends=True).n_days == 7
+
+
+def test_schedule_respects_weekday_mapping(default_data, default_result):
+    """수업시간 시험은 그 과목 수업 요일에 해당하는 시험일에만 놓인다 (예: 월·수 수업 → 12/21(월) 또는 12/16(수))"""
+    st = Settings()
+    s = default_result.schedule.set_index("course_code")
+    for c in default_data.course_map.values():
+        if c.exam_type == "수업시간":
+            assert st.weekday(int(s.loc[c.code, "day"])) in c.days
+
+
+def test_general_courses_block_exam_times(default_data, default_result):
+    """교양 수업 시간에는 그 교양을 듣는 학생의 시험이 잡히지 않는다"""
+    st = Settings()
+    cm = default_data.course_map
+    s = default_result.schedule.set_index("course_code")
+    gens = [c for c in cm.values() if c.dept == "교양"]
+    assert gens
+    for g in gens:
+        blocks = st.class_blocks(g)
+        for sid in default_data.students_of[g.code]:
+            for code in default_data.courses_of[sid]:
+                if code in s.index:
+                    r = s.loc[code]
+                    assert not any(int(r.day) == d and int(r.start) < e and b < int(r.end) for d, b, e in blocks)
+
+
+def test_room_timetable_has_no_overlap(default_data, default_result):
+    from ui.tables import room_timetable
+    st = Settings()
+    rt = room_timetable(default_data, default_result.schedule, st, {})
+    for (_room, _day), g in rt.groupby(["강의실", "day_idx"]):
+        g = g.sort_values("start_min")
+        assert (g["start_min"].iloc[1:].values >= g["end_min"].iloc[:-1].values).all()
+    assert set(rt[rt["종류"] == "시험"]["과목코드"]) == set(default_result.schedule.course_code)
+
+
+def test_availability_fixed_only_shows_more_options(default_data, default_result):
+    """확정된 일정만 기준으로 보면, 다른 과목의 미확정 추천안까지 막을 때보다 가능한 시각이 같거나 많다"""
+    from core.explain import slot_map
+    st = Settings()
+    for code in list(default_result.schedule.course_code)[:6]:
+        loose = [x for x in slot_map(default_data, default_result.schedule, st, {}, code, fixed_only=True) if x["status"] != "blocked"]
+        tight = [x for x in slot_map(default_data, default_result.schedule, st, {}, code) if x["status"] != "blocked"]
+        assert len(loose) >= len(tight) >= 1     # 현재 배정 시각은 항상 가능

@@ -6,7 +6,9 @@ from core.timeutil import hm_to_min as H
 from core.validator import validate
 from core.constraints import validate_request
 
-ST = Settings()
+from datetime import date
+
+ST = Settings(exam_start=date(2026, 12, 14), exam_end=date(2026, 12, 18))   # 월~금 한 주 (날 번호 = 요일)
 
 
 def sched(rows):

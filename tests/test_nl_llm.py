@@ -80,7 +80,7 @@ def test_llm_result_is_used_when_valid(monkeypatch):
 
 def test_llm_invalid_output_falls_back(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
-    bad = {"unavailable": [{"day": "토", "start": "12:00", "end": "18:00"}]}   # 토요일 → 스키마 검증 실패
+    bad = {"unavailable": [{"day": "월", "start": "18:00", "end": "12:00"}]}   # 종료가 시작보다 빠름 → 검증 실패
     monkeypatch.setattr(llm, "_create", lambda *a: _fake_response(json.dumps(bad, ensure_ascii=False)))
     req, mode, note = parse_request("금요일 안 돼요", CTX)
     assert mode == "규칙 기반" and "규칙 기반" in note

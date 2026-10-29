@@ -25,11 +25,14 @@ def manual_schedule(ds: Dataset, settings: Settings, seed: int = 0) -> pd.DataFr
     rows = []
     for c in cm.values():
         if c.exam_type == EXAM_NONE:
-            for b in c.class_blocks():
+            for b in settings.class_blocks(c):
                 room_busy.setdefault(c.room, []).append(b)
                 prof_busy.setdefault(c.prof, []).append(b)
         elif c.exam_type == EXAM_IN_CLASS:
-            d, s, e = c.in_class_exam_options()[0]
+            opts = settings.in_class_options(c)
+            if not opts:
+                continue
+            d, s, e = opts[0]
             room_busy.setdefault(c.room, []).append((d, s, e))
             prof_busy.setdefault(c.prof, []).append((d, s, e))
             rows.append(dict(course_code=c.code, day=d, start=s, end=e, room_id=c.room, exam_type=c.exam_type, locked=False))
@@ -42,9 +45,9 @@ def manual_schedule(ds: Dataset, settings: Settings, seed: int = 0) -> pd.DataFr
     for c in seps:
         prof = ds.prof_map.get(c.prof)
         dur = c.exam_minutes
-        grid = [(d, m) for d in range(5) for m in range(settings.day_start, settings.day_end - dur + 1, SLOT_MINUTES)]
+        grid = [(d, m) for d in range(settings.n_days) for m in range(settings.day_start, settings.day_end - dur + 1, SLOT_MINUTES)]
         ok = [(d, m) for d, m in grid
-              if not (prof and any(w.overlaps(d, m, m + dur) for w in prof.unavailable))
+              if not (prof and any(settings.hits(w, d, m, m + dur) for w in prof.unavailable))
               and free(prof_busy.get(c.prof, []), d, m, m + dur)]
         d, m = rng.choice(ok or grid)
         rooms = [r for r in rm.values() if r.capacity >= c.enrollment and r.allows(c.dept)]

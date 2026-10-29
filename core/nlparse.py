@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 
 from . import llm
-from .config import DAYS
+from .config import DAYS, WEEKDAYS
 from .constraints import REQUEST_SCHEMA, CourseRequest, RequestError, validate_request
 from .timeutil import min_to_hm
 
@@ -24,7 +24,7 @@ class ParseContext:
     duration: int = 90
     enrollment: int = 50
     exam_type: str = "별도"
-    current: tuple[int, int, int] | None = None   # (요일, 시작, 종료)
+    current: tuple[int, int, int] | None = None   # 현재 배정 (요일 0=월…, 시작, 종료)
     day_start: int = 540
     day_end: int = 1080
     buildings: list[str] = field(default_factory=list)
@@ -148,7 +148,7 @@ def rule_parse(text: str, ctx: ParseContext) -> dict:
         s, e = max(s, ctx.day_start), min(e, ctx.day_end)
         if e <= s:
             return None
-        return {"day": DAYS[day] if day is not None else None, "start": min_to_hm(s), "end": min_to_hm(e)}
+        return {"day": WEEKDAYS[day] if day is not None else None, "start": min_to_hm(s), "end": min_to_hm(e)}
 
     for clause in _split(text):
         parsed = False
@@ -244,7 +244,7 @@ def parse_request(text: str, ctx: ParseContext, use_llm: bool = True) -> tuple[C
                 "시험 방식": ctx.exam_type,
                 "현재 시험 시간(분)": ctx.duration,
                 "수강인원": ctx.enrollment,
-                "현재 배정": (f"{DAYS[ctx.current[0]]}요일 {min_to_hm(ctx.current[1])}~{min_to_hm(ctx.current[2])}"
+                "현재 배정": (f"{WEEKDAYS[ctx.current[0]]}요일 {min_to_hm(ctx.current[1])}~{min_to_hm(ctx.current[2])}"
                           if ctx.current else "없음"),
             }
             system = llm.load_prompt("parse_constraints", day_start=min_to_hm(ctx.day_start),

@@ -7,7 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from core.config import DAYS, DEPARTMENTS, DEPT_COLORS, EXAM_NONE
+from core.config import DEPARTMENTS, DEPT_COLORS, EXAM_NONE, GENERAL_DEPT
 from core.timeutil import min_to_hm
 from ui import state
 from ui.style import hero, metric_cards
@@ -30,18 +30,20 @@ for r in S.schedule.itertuples(index=False):
                       dept=c.dept, kind="시험", confirmed=r.course_code in S.confirmed, n=c.enrollment))
 for c in cm.values():
     if c.exam_type == EXAM_NONE:
-        for d, s, e in c.class_blocks():
+        for d, s, e in S.settings.class_blocks(c):
             items.append(dict(day=d, start=s, end=e, room=c.room, code=c.code, name=c.name, dept=c.dept,
                               kind="정규 수업", confirmed=False, n=c.enrollment))
 df = pd.DataFrame(items)
 
 f1, f2 = st.columns([2, 1.2])
-day = f1.segmented_control("요일", list(range(5)), default=S.get("room_day", 0),
-                           format_func=lambda d: S.settings.date_label(d), key="room_day_sel")
+n_days = S.settings.n_days
+day = f1.segmented_control("날짜", list(range(n_days)), default=min(S.get("room_day", 0), n_days - 1),
+                           format_func=lambda d: S.settings.short_label(d), key="room_day_sel")
 day = 0 if day is None else day
 S.room_day = day
 buildings = sorted({r.building for r in rm.values()})
-bsel = f2.multiselect("건물", buildings, placeholder="건물 전체")
+bsel = f2.multiselect("건물", buildings, default=[b for b in buildings if b != "교양관"],
+                      placeholder="건물 전체", help="교양관은 다른 단과대 교양 수업 전용이라 기본으로 숨깁니다.")
 
 # ---- 요약 ----
 dd = df[df.day == day]
@@ -49,7 +51,7 @@ used_rooms = dd.room.nunique()
 total_min = (S.settings.day_end - S.settings.day_start) * len(rm)
 busy_min = int((dd.end - dd.start).sum())
 metric_cards([
-    dict(label=f"{DAYS[day]}요일 시험 수", value=int((dd.kind == "시험").sum()), unit="개", tone="info"),
+    dict(label=f"{S.settings.short_label(day)} 시험 수", value=int((dd.kind == "시험").sum()), unit="개", tone="info"),
     dict(label="사용 강의실", value=used_rooms, unit=f"/ {len(rm)}실", tone="info"),
     dict(label="강의실 시간 점유율", value=f"{100 * busy_min / total_min:.0f}" if total_min else "0", unit="%",
          tone="info", sub="전체 강의실 × 하루 시험 시간 대비"),
@@ -68,7 +70,7 @@ order = [room_labels[r.rid] for r in rooms]
 
 base = datetime(2000, 1, 1)
 fig = go.Figure()
-for dept in DEPARTMENTS:
+for dept in DEPARTMENTS + [GENERAL_DEPT]:
     for kind in ("시험", "정규 수업"):
         sub = show[(show.dept == dept) & (show.kind == kind)]
         if sub.empty:

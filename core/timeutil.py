@@ -1,14 +1,15 @@
 """시간 표현 변환 도우미.
 
-내부 표현: 요일 인덱스(0=월 … 4=금) + 하루 시작 0시 기준 분(minute).
-전역 시각 = 요일 * 1440 + 분  → 서로 다른 날의 구간은 절대 겹치지 않는다.
+내부 표현: 날 번호(시험일 번호 또는 요일 인덱스 0=월 … 6=일) + 하루 시작 0시 기준 분(minute).
+전역 시각 = 날 번호 * 1440 + 분  → 서로 다른 날의 구간은 절대 겹치지 않는다.
+Window.day 는 항상 '요일'이다 (CSV·교수 요청이 요일로 적히므로). 시험일과 비교할 때는 Settings.hits()/inside() 를 쓴다.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 
-from .config import DAYS
+from .config import WEEKDAYS
 
 DAY_MINUTES = 1440
 
@@ -32,9 +33,9 @@ def min_to_hm(m: int) -> str:
 
 def day_index(d: str) -> int:
     d = str(d).strip().replace("요일", "")
-    if d not in DAYS:
-        raise ValueError(f"요일은 월~금 중 하나여야 합니다: '{d}'")
-    return DAYS.index(d)
+    if d not in WEEKDAYS:
+        raise ValueError(f"요일은 월~일 중 하나여야 합니다: '{d}'")
+    return WEEKDAYS.index(d)
 
 
 def gtime(day: int, minute: int) -> int:
@@ -46,7 +47,8 @@ def split_g(g: int) -> tuple[int, int]:
 
 
 def fmt_slot(day: int, start: int, end: int | None = None) -> str:
-    s = f"{DAYS[day]} {min_to_hm(start)}"
+    """시험일 번호 기준 짧은 표기 (검증기 메시지용)"""
+    s = f"{day + 1}일차 {min_to_hm(start)}"
     if end is not None:
         s += f"~{min_to_hm(end)}"
     return s
@@ -70,12 +72,12 @@ class Window:
         return self.start <= start and end <= self.end
 
     def to_text(self) -> str:
-        d = DAYS[self.day] if self.day is not None else "매일"
+        d = WEEKDAYS[self.day] if self.day is not None else "매일"
         return f"{d} {min_to_hm(self.start)}-{min_to_hm(self.end)}"
 
     def to_dict(self) -> dict:
         return {
-            "day": DAYS[self.day] if self.day is not None else None,
+            "day": WEEKDAYS[self.day] if self.day is not None else None,
             "start": min_to_hm(self.start),
             "end": min_to_hm(self.end),
         }
@@ -102,7 +104,7 @@ def parse_windows(text) -> list[Window]:
         part = part.strip()
         if not part:
             continue
-        m = re.fullmatch(r"(월|화|수|목|금|매일)(?:요일)?\s+(\d{1,2}:\d{2})\s*[-~]\s*(\d{1,2}:\d{2})", part)
+        m = re.fullmatch(r"(월|화|수|목|금|토|일|매일)(?:요일)?\s+(\d{1,2}:\d{2})\s*[-~]\s*(\d{1,2}:\d{2})", part)
         if not m:
             raise ValueError(f"시간대 형식이 잘못되었습니다: '{part}' (예: 월 09:00-12:00)")
         out.append(Window.from_dict({"day": m.group(1), "start": m.group(2), "end": m.group(3)}))

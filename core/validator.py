@@ -15,7 +15,7 @@ from .constraints import CourseRequest
 from .dataset import Dataset
 from .priority import dept_rank
 from .settings import Settings
-from .timeutil import fmt_slot
+from .timeutil import min_to_hm
 
 HARD_RULES = {
     "H1": "학생 시험·수업 시간 겹침",
@@ -64,14 +64,14 @@ def _ov(a: Item, b: Item) -> bool:
     return a.day == b.day and a.start < b.end and b.start < a.end
 
 
-def week_items(ds: Dataset, schedule: pd.DataFrame) -> dict[str, list[Item]]:
-    """과목별 시험 주간 일정 목록 (결과표 + 시험 없음 과목의 정규 수업)"""
+def week_items(ds: Dataset, schedule: pd.DataFrame, settings: Settings) -> dict[str, list[Item]]:
+    """과목별 시험 기간 일정 목록 (결과표 + 시험 없음·교양 과목의 정규 수업). day = 시험일 번호"""
     out: dict[str, list[Item]] = defaultdict(list)
     for r in schedule.itertuples(index=False):
         out[r.course_code].append(Item(r.course_code, "시험", int(r.day), int(r.start), int(r.end), str(r.room_id)))
     for c in ds.course_map.values():
         if c.exam_type == EXAM_NONE:
-            for d, s, e in c.class_blocks():
+            for d, s, e in settings.class_blocks(c):
                 out[c.code].append(Item(c.code, "수업", d, s, e, c.room))
     return out
 
@@ -91,7 +91,11 @@ def validate(ds: Dataset, schedule: pd.DataFrame, settings: Settings,
         else:
             viol.append({"rule": rule, "detail": "(이하 생략)"})
 
-    items = week_items(ds, schedule)
+    items = week_items(ds, schedule, settings)
+
+    def fmt_slot(d, s, e=None):
+        t = f"{settings.short_label(d) if 0 <= d < settings.n_days else f'{d + 1}일차'} {min_to_hm(s)}"
+        return t + (f"~{min_to_hm(e)}" if e is not None else "")
     exams = {code: [i for i in its if i.kind == "시험"] for code, its in items.items()}
 
     # ---- H0: 누락·중복·기간 이탈·수업시간 시험 위치 ----
@@ -105,10 +109,10 @@ def validate(ds: Dataset, schedule: pd.DataFrame, settings: Settings,
             if c.exam_type == EXAM_SEPARATE:
                 if e.end - e.start != c.exam_minutes:
                     add("H0", f"{c.code} {c.name}: 시험 길이 {e.end - e.start}분 ≠ 교수가 정한 {c.exam_minutes}분.")
-                if not (settings.day_start <= e.start and e.end <= settings.day_end) or not 0 <= e.day < 5:
+                if not (settings.day_start <= e.start and e.end <= settings.day_end) or not 0 <= e.day < settings.n_days:
                     add("H0", f"{c.code} {c.name}: 시험 기간·시간({fmt_slot(e.day, e.start, e.end)})을 벗어났습니다.")
             if c.exam_type == EXAM_IN_CLASS:
-                if (e.day, e.start, e.end) not in c.in_class_exam_options() or e.room != c.room:
+                if (e.day, e.start, e.end) not in settings.in_class_options(c) or e.room != c.room:
                     add("H0", f"{c.code} {c.name}: 수업시간 시험이 정규 수업 시간·강의실이 아닙니다.")
 
     # ---- H1: 학생별 겹침 ----
@@ -133,14 +137,14 @@ def validate(ds: Dataset, schedule: pd.DataFrame, settings: Settings,
                 continue
             if p and cm[e.code].exam_type == EXAM_SEPARATE:
                 for w in p.unavailable:
-                    if w.overlaps(e.day, e.start, e.end):
+                    if settings.hits(w, e.day, e.start, e.end):
                         add("H2", f"{e.code}: 교수({p.name}) 불가 시간 {w.to_text()}에 배정되었습니다.")
             req = requests.get(e.code)
             if req:
                 for w in req.unavailable:
-                    if w.overlaps(e.day, e.start, e.end):
+                    if settings.hits(w, e.day, e.start, e.end):
                         add("H2", f"{e.code}: 교수 요청 불가 시간 {w.to_text()}에 배정되었습니다.")
-                if req.allowed and not any(w.contains(e.day, e.start, e.end) for w in req.allowed):
+                if req.allowed and not any(settings.inside(w, e.day, e.start, e.end) for w in req.allowed):
                     add("H2", f"{e.code}: 교수 요청 '이 시간에만' 조건을 벗어났습니다.")
         for a in range(len(its)):
             for b in range(a + 1, len(its)):
@@ -195,7 +199,7 @@ def validate(ds: Dataset, schedule: pd.DataFrame, settings: Settings,
 
 def quality(ds: Dataset, schedule: pd.DataFrame, settings: Settings, requests, items=None):
     cm, rm = ds.course_map, ds.room_map
-    items = items or week_items(ds, schedule)
+    items = items or week_items(ds, schedule, settings)
     exam_of = {}
     for r in schedule.itertuples(index=False):
         exam_of[r.course_code] = Item(r.course_code, "시험", int(r.day), int(r.start), int(r.end), str(r.room_id))
@@ -244,9 +248,9 @@ def quality(ds: Dataset, schedule: pd.DataFrame, settings: Settings, requests, i
         pc["waste"] = (r.capacity - c.enrollment) if r else 0
         prefs = preferences_for(ds, code, requests)
         pc["has_pref"] = bool(prefs)
-        pc["pref_met"] = bool(prefs) and any(p.contains(e.day, e.start, e.end) for p in prefs)
+        pc["pref_met"] = bool(prefs) and any(settings.inside(p, e.day, e.start, e.end) for p in prefs)
         req = requests.get(code)
-        pc["in_avoid"] = bool(req and any(w.overlaps(e.day, e.start, e.end) for w in req.avoid))
+        pc["in_avoid"] = bool(req and any(settings.hits(w, e.day, e.start, e.end) for w in req.avoid))
         if c.exam_type != EXAM_SEPARATE:
             continue
         ds_ = dept_stats[c.dept]

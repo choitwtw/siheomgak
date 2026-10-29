@@ -42,12 +42,34 @@ def _dur(c) -> int:
 
 def evaluate_slots(ds: Dataset, schedule: pd.DataFrame, settings: Settings,
                    requests: dict[str, CourseRequest], code: str) -> list[dict]:
-    """다른 시험을 그대로 둔 채, code 과목을 각 후보 시각에 놓았을 때의 결과 (반드시 지킬 조건 통과 후보만)."""
+    """다른 시험을 그대로 둔 채, code 과목을 각 후보 시각에 놓았을 때의 결과 (반드시 지킬 조건 통과 후보만, 좋은 순)."""
+    out = [x for x in slot_map(ds, schedule, settings, requests, code) if x["status"] != "blocked"]
+    out.sort(key=lambda x: (x["score"], x["day"], x["start"]))
+    return out
+
+
+def slot_map(ds: Dataset, schedule: pd.DataFrame, settings: Settings,
+             requests: dict[str, CourseRequest], code: str, fixed_only: bool = False) -> list[dict]:
+    """모든 후보 시작 시각의 상태.
+    status: ok(가능·학생 부담 없음) / burden(가능하지만 하루 3과목·연속 시험 발생) / blocked(불가)
+    blocked 이면 reason 과 (수강생 충돌이면) conflicts 인원.
+
+    fixed_only=True: 다른 과목은 '확정된 시험'과 '바뀌지 않는 수업'만 고려한다 (교수가 처음 시간표를 볼 때).
+      아직 확정 안 된 수업시간 시험은 어느 회차에 볼지 모르므로 그 과목의 정규 수업 회차를 모두 막아 둔다.
+    fixed_only=False: 다른 과목의 현재 추천안까지 모두 고정된 것으로 보고 계산한다."""
     cm, rm = ds.course_map, ds.room_map
     c = cm[code]
     dur = _dur(c)
     others = schedule[schedule.course_code != code]
-    items = week_items(ds, others)
+    if fixed_only:
+        others = others[others["locked"].astype(bool)]
+    items = week_items(ds, others, settings)
+    if fixed_only:
+        done = set(others.course_code)
+        for oc in cm.values():
+            if oc.code != code and oc.exam_type == EXAM_IN_CLASS and oc.code not in done:
+                for d, s0, e0 in settings.in_class_options(oc):
+                    items[oc.code].append(Item(oc.code, "수업", d, s0, e0, oc.room))
     req = requests.get(code)
     prof = ds.prof_map.get(c.prof)
     prefs = preferences_for(ds, code, requests)
@@ -60,10 +82,11 @@ def evaluate_slots(ds: Dataset, schedule: pd.DataFrame, settings: Settings,
             room_items[i.room].append(i)
 
     if c.exam_type == EXAM_IN_CLASS:
-        grid = [(d, c.start) for d in c.days]
+        grid = [(d, s) for d, s, _e in settings.in_class_options(c)]
         rooms = [rm[c.room]] if c.room in rm else []
     else:
-        grid = [(d, m) for d in range(5) for m in range(settings.day_start, settings.day_end - dur + 1, SLOT_MINUTES)]
+        grid = [(d, m) for d in range(settings.n_days)
+                for m in range(settings.day_start, settings.day_end - dur + 1, SLOT_MINUTES)]
         rooms = [r for r in rm.values() if r.capacity >= c.enrollment and r.allows(c.dept)
                  and not (req and req.min_capacity and r.capacity < req.min_capacity)
                  and not (req and req.building and req.building not in r.building)
@@ -72,18 +95,26 @@ def evaluate_slots(ds: Dataset, schedule: pd.DataFrame, settings: Settings,
     out = []
     for d, m in grid:
         e = m + dur
-        if c.exam_type == EXAM_SEPARATE and prof and any(w.overlaps(d, m, e) for w in prof.unavailable):
+        base = dict(day=d, start=m, end=e)
+        if c.exam_type == EXAM_SEPARATE and prof and any(settings.hits(w, d, m, e) for w in prof.unavailable):
+            out.append(dict(base, status="blocked", reason="교수 불가 시간"))
             continue
-        if req and (any(w.overlaps(d, m, e) for w in req.unavailable)
-                    or (req.allowed and not any(w.contains(d, m, e) for w in req.allowed))):
+        if req and any(settings.hits(w, d, m, e) for w in req.unavailable):
+            out.append(dict(base, status="blocked", reason="교수 요청 불가 시간"))
+            continue
+        if req and req.allowed and not any(settings.inside(w, d, m, e) for w in req.allowed):
+            out.append(dict(base, status="blocked", reason="'이 시간에만' 요청 밖"))
             continue
         if any(_ov(d, m, e, i.day, i.start, i.end) for i in prof_items):
+            out.append(dict(base, status="blocked", reason="교수 본인의 다른 수업·시험"))
             continue
-        conflict = sum(1 for its in stu_items.values() if any(_ov(d, m, e, i.day, i.start, i.end) for i in its))
-        if conflict:
+        busy = [sid for sid, its in stu_items.items() if any(_ov(d, m, e, i.day, i.start, i.end) for i in its)]
+        if busy:
+            out.append(dict(base, status="blocked", reason=f"수강생 {len(busy)}명 시간 겹침", conflicts=len(busy)))
             continue
         room = next((r for r in rooms if not any(_ov(d, m, e, i.day, i.start, i.end) for i in room_items[r.rid])), None)
         if room is None:
+            out.append(dict(base, status="blocked", reason="빈 강의실 없음"))
             continue
         overload = consec = 0
         for its in stu_items.values():
@@ -92,13 +123,13 @@ def evaluate_slots(ds: Dataset, schedule: pd.DataFrame, settings: Settings,
                 overload += 1
             if any(0 <= m - i.end < CONSECUTIVE_GAP_MIN or 0 <= i.start - e < CONSECUTIVE_GAP_MIN for i in same):
                 consec += 1
-        pref_met = (not prefs) or any(p.contains(d, m, e) for p in prefs)
-        avoid = bool(req and any(w.overlaps(d, m, e) for w in req.avoid))
+        pref_met = (not prefs) or any(settings.inside(p, d, m, e) for p in prefs)
+        avoid = bool(req and any(settings.hits(w, d, m, e) for w in req.avoid))
         score = (W_OVERLOAD * overload + W_CONSECUTIVE * consec + (0 if pref_met else W_PREFERENCE)
                  + (W_AVOID if avoid else 0) + W_ROOM_WASTE * ((room.capacity - c.enrollment + 5) // 10))
-        out.append(dict(day=d, start=m, end=e, room=room.rid, capacity=room.capacity, overload=overload,
-                        consecutive=consec, pref_met=pref_met, has_pref=bool(prefs), avoid=avoid, score=score))
-    out.sort(key=lambda x: (x["score"], x["day"], x["start"]))
+        out.append(dict(base, status="burden" if (overload or consec) else "ok", room=room.rid,
+                        capacity=room.capacity, overload=overload, consecutive=consec, pref_met=pref_met,
+                        has_pref=bool(prefs), avoid=avoid, score=score, conflicts=0))
     return out
 
 
@@ -118,7 +149,7 @@ def course_facts(ds: Dataset, schedule: pd.DataFrame, settings: Settings, reques
     rank = dept_rank(settings.semester).get(c.dept)
     facts = {
         "code": code, "name": c.name, "dept": c.dept, "priority_rank": rank, "has_exam": True,
-        "exam_type": c.exam_type, "day": d, "day_name": DAYS[d] + "요일", "date": settings.date_label(d),
+        "exam_type": c.exam_type, "day": d, "day_name": settings.date_label(d), "date": settings.date_label(d),
         "start": min_to_hm(s), "end": min_to_hm(e), "minutes": e - s,
         "room": r.room_id, "room_capacity": room.capacity if room else None,
         "enrollment": c.enrollment, "student_conflicts": 0,

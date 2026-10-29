@@ -5,13 +5,18 @@ from core.priority import dept_weights, priority_order
 
 def test_generator_default_scale(default_data):
     s = default_data.summary()
-    assert s["학생"] == 500 and s["과목"] == 40 and s["교수"] == 25 and s["강의실"] >= 40
-    assert (s["수업시간 시험"], s["별도 시험"], s["시험 없음"]) == (14, 22, 4)
+    sci = default_data.courses[default_data.courses.department != "교양"]
+    gen = default_data.courses[default_data.courses.department == "교양"]
+    assert s["학생"] == 500 and len(sci) == 40 and len(gen) == 8 and s["강의실"] >= 40
+    profs = default_data.professors
+    assert (profs.department != "교양").sum() == 25
+    assert tuple(sci.exam_type.value_counts()[["수업시간", "별도", "없음"]]) == (14, 22, 4)
+    assert set(gen.exam_type) == {"없음"}      # 교양은 정규 수업 시간을 막아 두기만 한다
     per_student = default_data.enrollments.groupby("student_id").size()
     assert per_student.min() >= 5 and per_student.max() <= 7
-    multi = default_data.courses["target_grades"].str.contains(",").mean()
+    multi = sci["target_grades"].str.contains(",").mean()
     assert 0.25 <= multi <= 0.35
-    assert set(default_data.courses["exam_minutes"]) <= {60, 75, 90, 120}
+    assert set(sci["exam_minutes"]) <= {60, 75, 90, 120}
 
 
 def test_generator_reproducible():
@@ -60,3 +65,16 @@ def test_priority_rotation():
     assert priority_order("25-2")[0] == "화학과"
     w = dept_weights("26-2")
     assert w["수학과"] == 6 and w["물리학과"] == 1
+
+
+def test_generator_same_across_processes():
+    """파이썬 해시 시드가 달라도(=실행할 때마다) 같은 데이터가 나와야 한다"""
+    import os
+    import subprocess
+    import sys
+    code = ("from core.datagen import generate; import hashlib; ds = generate(); "
+            "print(hashlib.md5(''.join(t.to_csv() for t in ds.tables().values()).encode()).hexdigest())")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    outs = {subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True,
+                           env={**os.environ, "PYTHONHASHSEED": str(h)}).stdout for h in (1, 2, 3)}
+    assert len(outs) == 1 and len(next(iter(outs))) > 10

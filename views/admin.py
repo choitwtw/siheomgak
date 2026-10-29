@@ -1,7 +1,8 @@
-"""관리자 대시보드: 학기·우선순위, 데이터 준비, 전체 배정, 핵심 지표, 무작위 배정 대비 비교."""
+"""관리자 대시보드: 학기·시험 기간, 우선순위, 배정 실행·지표, 확정 진행·발표, 강의실별 시험 시간표, 데이터."""
 from __future__ import annotations
 
-from datetime import timedelta
+import dataclasses
+import html
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -20,11 +21,12 @@ from core.csvio import (
 from core.datagen import GenConfig, generate
 from core.dataset import SCHEMAS, TABLE_LABELS
 from core.priority import dept_weights, priority_order, semester_label, semester_options
-from core.settings import Settings, default_week_start
+from core.settings import NOTIFY_INSTANT, NOTIFY_PUBLISH, Settings, default_period
 from core.timeutil import hm_to_min, min_to_hm
 from ui import state
+from ui.calendar import legend, week_grid
 from ui.style import BORDER, MUTED, NAVY, badge, hero, metric_cards
-from ui.tables import korean, schedule_export, schedule_table
+from ui.tables import korean, room_timetable, room_timetable_html, schedule_export, schedule_table
 
 S = st.session_state
 ds = S.ds
@@ -33,36 +35,50 @@ hero("ADMIN", "관리자 대시보드",
      "수강신청이 끝난 학생 시간표와 교수 일정을 대조해, 충돌 없는 시험 일정과 강의실을 자동으로 배정합니다.")
 
 # ---------------------------------------------------------------------------
-# 학기 설정 + 우선순위
+# 학기 · 시험 기간 + 우선순위
 # ---------------------------------------------------------------------------
 left, right = st.columns([1.05, 1], gap="large")
 with left:
     with st.container(border=True):
         st.markdown("#### 학기 · 시험 기간")
         opts = semester_options()
-        c1, c2 = st.columns(2)
-        sem = c1.selectbox("학기", opts, index=opts.index(S.settings.semester),
+        cur = S.settings
+        sem = st.selectbox("학기", opts, index=opts.index(cur.semester),
                            format_func=lambda x: f"{x}학기 ({semester_label(x)})")
-        week = c2.date_input("시험 주간 시작일(월요일)",
-                             value=S.settings.week_start if sem == S.settings.semester else default_week_start(sem))
+        period_default = (cur.exam_start, cur.exam_end) if sem == cur.semester else default_period(sem)
+        c1, c2 = st.columns([2, 1])
+        period = c1.date_input("시험 기간", value=period_default, format="YYYY/MM/DD")
+        weekends = c2.checkbox("주말 포함", value=cur.include_weekends)
         times = [min_to_hm(m) for m in range(7 * 60, 22 * 60 + 1, 30)]
         c3, c4, c5 = st.columns(3)
-        ds_start = c3.selectbox("하루 시작", times, index=times.index(min_to_hm(S.settings.day_start)))
-        ds_end = c4.selectbox("하루 종료", times, index=times.index(min_to_hm(S.settings.day_end)))
-        limit = c5.number_input("풀이 시간 제한(초)", 5, 120, S.settings.time_limit, step=5)
-        week = week - timedelta(days=week.weekday())
-        new = Settings(semester=sem, day_start=hm_to_min(ds_start), day_end=hm_to_min(ds_end),
-                       time_limit=int(limit), week_start=week)
-        if hm_to_min(ds_end) - hm_to_min(ds_start) < 120:
-            st.error("하루 시험 시간은 2시간 이상이어야 합니다.")
-        elif new != S.settings:
-            changed_rules = (new.semester, new.day_start, new.day_end) != (
-                S.settings.semester, S.settings.day_start, S.settings.day_end)
-            S.settings = new
-            if changed_rules and S.schedule is not None:
-                S.stale = True
-            S.report = None
-            st.rerun()
+        ds_start = c3.selectbox("하루 시작", times, index=times.index(min_to_hm(cur.day_start)))
+        ds_end = c4.selectbox("하루 종료", times, index=times.index(min_to_hm(cur.day_end)))
+        limit = c5.number_input("풀이 시간 제한(초)", 5, 120, cur.time_limit, step=5)
+        if isinstance(period, (tuple, list)) and len(period) == 2:
+            new = dataclasses.replace(cur, semester=sem, exam_start=period[0], exam_end=period[1],
+                                      include_weekends=weekends, day_start=hm_to_min(ds_start),
+                                      day_end=hm_to_min(ds_end), time_limit=int(limit))
+            new = Settings(**{f.name: getattr(new, f.name) for f in dataclasses.fields(Settings)})
+            if hm_to_min(ds_end) - hm_to_min(ds_start) < 120:
+                st.error("하루 시험 시간은 2시간 이상이어야 합니다.")
+            elif new.n_days == 0:
+                st.error("시험 기간에 시험을 볼 수 있는 날이 없습니다. 기간이나 '주말 포함'을 확인해 주세요.")
+            elif new != cur:
+                calendar_changed = (new.exam_dates != cur.exam_dates or new.day_start != cur.day_start
+                                    or new.day_end != cur.day_end or new.semester != cur.semester)
+                S.settings = new
+                if calendar_changed and (S.schedule is not None or S.confirmed):
+                    state.reset_work()
+                    S.calendar_reset_msg = True
+                S.report = None
+                st.rerun()
+        else:
+            st.caption("끝나는 날짜까지 선택해 주세요.")
+        st.markdown("<div class='sg-muted'>시험일: " + " · ".join(
+            S.settings.short_label(k) for k in range(S.settings.n_days)) + f" (총 {S.settings.n_days}일)</div>",
+            unsafe_allow_html=True)
+        if S.pop("calendar_reset_msg", False):
+            st.info("시험 기간·시간이 바뀌어 기존 배정·확정을 초기화하고 새로 배정합니다.")
 
 with right:
     with st.container(border=True):
@@ -87,7 +103,8 @@ with right:
             f"<tbody>{''.join(rows)}</tbody></table>", unsafe_allow_html=True)
 
 st.write("")
-tab_run, tab_data = st.tabs(["📊 배정 실행 · 결과", "🗂️ 데이터 준비"])
+tab_run, tab_conf, tab_rooms, tab_data = st.tabs(
+    ["① 배정 실행 · 결과", "② 확정 진행 · 발표", "③ 강의실별 시험 시간표", "🗂️ 데이터 준비"])
 
 # ---------------------------------------------------------------------------
 # 배정 실행 · 결과
@@ -96,9 +113,8 @@ with tab_run:
     b1, b2, b3 = st.columns([1.3, 1.3, 3])
     run = b1.button("⚡ 전체 배정 실행", type="primary", width="stretch")
     if b2.button("확정·요청 초기화", width="stretch",
-                 help="교수 확정, 자연어 요청, 알림을 모두 지우고 처음 상태로 돌립니다."):
-        S.requests, S.confirmed, S.notifications, S.change_log = {}, {}, [], []
-        S.schedule, S.report = None, None
+                 help="교수 확정·발표, 자연어 요청, 알림을 모두 지우고 처음 상태로 돌립니다."):
+        state.reset_work()
         run = True
     if S.get("stale") and S.schedule is not None:
         b3.warning("학기·시간 설정이 바뀌었습니다. 전체 배정을 다시 실행해 주세요.")
@@ -178,8 +194,7 @@ with tab_run:
                 st.dataframe(pd.DataFrame(m["dept_table"]), hide_index=True, width="stretch",
                              column_config={"좌석활용률": st.column_config.NumberColumn(format="%.1f%%")})
 
-        with st.container(border=True):
-            st.markdown("#### 시험 일정표")
+        with st.expander("과목별 시험 일정 목록 (검색·필터)", expanded=False):
             tbl = schedule_table(ds, S.schedule, S.settings)
             f1, f2, f3 = st.columns([1.2, 1, 1])
             q = f1.text_input("검색", placeholder="과목명·교수·강의실", label_visibility="collapsed")
@@ -202,6 +217,161 @@ with tab_run:
                                width="stretch")
             e2.download_button("데이터+일정 ZIP", dataset_zip_bytes(ds, {"exam_schedule": exp}),
                                "siheomgak_export.zip", "application/zip", width="stretch")
+
+# ---------------------------------------------------------------------------
+# ② 확정 진행 · 발표
+# ---------------------------------------------------------------------------
+with tab_conf:
+    if S.schedule is None:
+        st.info("먼저 ① 탭에서 배정을 실행해 주세요.")
+    else:
+        prog = state.dept_progress()
+        total = sum(len(r["codes"]) for r in prog)
+        done = sum(len(r["done"]) for r in prog)
+        turn = state.current_turn()
+        n_pub = len(S.published)
+        metric_cards([
+            dict(label="확정된 시험", value=done, unit=f"/ {total}개", tone="ok" if done == total else "info"),
+            dict(label="지금 확정 차례", value=turn or "모두 완료", tone="info",
+                 sub="우선순위 순서대로 확정" if S.settings.priority_lock else "순서 제한 없음"),
+            dict(label="학생에게 발표된 시험", value=n_pub, unit="개", tone="ok" if n_pub and n_pub == total else "info",
+                 sub=f"발표 {S.published_at}" if S.published_at else "아직 발표 전"),
+            dict(label="받은 알림 (학생)", value=len({n['student_id'] for n in S.notifications}), unit="명", tone="info"),
+        ])
+        o1, o2 = st.columns(2)
+        lock = o1.toggle("우선순위가 높은 학과부터 확정", value=S.settings.priority_lock,
+                         help="켜 두면 상위 순위 학과의 시험이 모두 확정되어야 다음 학과 교수가 확정할 수 있습니다.")
+        mode = o2.radio("학생 알림 방식", [NOTIFY_PUBLISH, NOTIFY_INSTANT], horizontal=True,
+                        index=0 if S.settings.notify_mode == NOTIFY_PUBLISH else 1,
+                        format_func=lambda x: "전체 확정 후 일괄 발표" if x == NOTIFY_PUBLISH else "교수 확정 즉시 개별 알림")
+        if lock != S.settings.priority_lock or mode != S.settings.notify_mode:
+            S.settings = dataclasses.replace(S.settings, priority_lock=lock, notify_mode=mode)
+            st.rerun()
+
+        with st.container(border=True):
+            st.markdown("#### 학과별 확정 진행 현황")
+            st.caption("1순위 학과 교수부터 시험 일정을 확정합니다. 상위 학과가 확정한 시간·강의실은 이후 배정에서 고정되고, "
+                       "다음 학과는 남은 시간에서 고릅니다. (시연용: 현재 추천안으로 학과 전체를 한 번에 확정할 수 있습니다)")
+            for r in prog:
+                cols = st.columns([0.5, 2, 1.2, 1.4, 1.6])
+                cols[0].markdown(f"**{r['rank']}**")
+                cols[1].markdown(f"<span style='display:inline-block;width:10px;height:10px;border-radius:3px;"
+                                 f"background:{DEPT_COLORS[r['dept']]};margin-right:8px'></span>{r['dept']}",
+                                 unsafe_allow_html=True)
+                cols[2].markdown(f"{len(r['done'])} / {len(r['codes'])}")
+                if r["complete"]:
+                    cols[3].markdown(badge("확정 완료", "ok"), unsafe_allow_html=True)
+                elif r["dept"] == turn or not S.settings.priority_lock:
+                    cols[3].markdown(badge("확정 차례", "warn"), unsafe_allow_html=True)
+                else:
+                    cols[3].markdown(badge("대기", "gray"), unsafe_allow_html=True)
+                can_bulk = not r["complete"] and (r["dept"] == turn or not S.settings.priority_lock)
+                if cols[4].button("추천안으로 일괄 확정", key=f"bulk_{r['dept']}", disabled=not can_bulk,
+                                  width="stretch"):
+                    n = state.confirm_dept(r["dept"])
+                    st.toast(f"{r['dept']} 시험 {n}개를 확정했습니다.", icon="✅")
+                    st.rerun()
+
+        with st.container(border=True):
+            st.markdown("#### 📢 시험 일정 발표 · 학생 알림")
+            unpublished = [c for c in S.confirmed if c not in S.published]
+            if S.settings.notify_mode == NOTIFY_INSTANT:
+                st.caption("'교수 확정 즉시 개별 알림' 방식입니다. 확정할 때마다 해당 수강생에게 알림이 갑니다.")
+            else:
+                st.caption("모든 시험이 확정되고 강의실 겹침이 없는지 확인한 뒤 발표하면, 수강생 개인 알림함으로 "
+                           "시험 일정이 전송되고 학생 시간표에 '확정'으로 표시됩니다. 정정 기간에 학생들이 참고합니다.")
+            rep2 = state.current_report()
+            hard = rep2.hard_count if rep2 else 0
+            if hard:
+                st.error(f"반드시 지킬 조건 위반이 {hard}건 있어 발표할 수 없습니다. ① 탭에서 다시 배정해 주세요.")
+            ok_partial = True
+            if done < total and unpublished:
+                ok_partial = st.checkbox(f"아직 미확정 시험이 {total - done}개 있습니다. 확정된 {len(unpublished)}개만 먼저 발표합니다.")
+            if st.button(f"📢 확정된 시험 {len(unpublished)}개 발표하기", type="primary",
+                         disabled=bool(hard) or not unpublished or not ok_partial):
+                n_codes, n_msgs = state.publish_all()
+                st.success(f"시험 {n_codes}개를 발표했습니다. 수강생 {n_msgs}명에게 알림을 보냈습니다.")
+                st.balloons()
+            if S.published_at and not unpublished:
+                st.success(f"발표 완료 ({S.published_at}) · 학생 화면에서 알림과 확정 시간표를 확인할 수 있습니다.")
+
+# ---------------------------------------------------------------------------
+# ③ 강의실별 시험 시간표
+# ---------------------------------------------------------------------------
+with tab_rooms:
+    if S.schedule is None:
+        st.info("먼저 ① 탭에서 배정을 실행해 주세요.")
+    else:
+        stg = S.settings
+        rt = room_timetable(ds, S.schedule, stg, S.confirmed)
+        exam_rt = rt[rt["종류"] == "시험"]
+        n_total = len(state.exam_courses())
+        if len(S.confirmed) < n_total:
+            st.info(f"확정 {len(S.confirmed)}/{n_total} — 아직 확정되지 않은 시험은 '추천'으로 표시됩니다. "
+                    "모든 시험이 확정되면 최종 시간표로 출력하세요.")
+        else:
+            st.success("모든 시험이 확정되었습니다. 아래 시간표를 출력해 강의실 관리에 쓰세요.")
+        rooms = sorted(set(exam_rt["강의실"]), key=lambda r: (ds.room_map[r].building, ds.room_map[r].room_no))
+
+        with st.container(border=True):
+            st.markdown("#### 강의실 × 날짜 한눈에 보기")
+            st.caption("칸마다 그날 그 강의실의 시험을 시간 순으로 보여 줍니다. ✔ = 교수 확정. 겹치는 시험이 있으면 빨간색으로 표시됩니다.")
+            head = "".join(f"<th>{stg.short_label(k)}</th>" for k in range(stg.n_days))
+            body = []
+            for rid in rooms:
+                rm_ = ds.room_map[rid]
+                cells = []
+                for k in range(stg.n_days):
+                    day_rows = exam_rt[(exam_rt["강의실"] == rid) & (exam_rt["day_idx"] == k)].sort_values("start_min")
+                    chips = []
+                    prev_end = -1
+                    for r in day_rows.itertuples(index=False):
+                        clash = r.start_min < prev_end
+                        prev_end = max(prev_end, r.end_min)
+                        color = DEPT_COLORS.get(r.학과, "#868E96")
+                        chips.append(
+                            f"<div class='rt-chip{' clash' if clash else ''}' style='border-left-color:{color}'>"
+                            f"<b>{r.시작}–{r.종료}</b> {html.escape(r.과목)}{' ✔' if r.상태 == '확정' else ''}</div>")
+                    cells.append(f"<td>{''.join(chips) or '<span class=rt-empty>–</span>'}</td>")
+                n_ex = int((exam_rt["강의실"] == rid).sum())
+                body.append(f"<tr><th class='rt-room'>{rid}<small>{rm_.capacity}석 · 시험 {n_ex}개</small></th>{''.join(cells)}</tr>")
+            st.markdown(
+                "<style>.rt-wrap{overflow-x:auto}.rt{border-collapse:separate;border-spacing:0;width:100%;font-size:.8rem}"
+                ".rt th,.rt td{border-bottom:1px solid #E4E8F1;padding:6px 8px;vertical-align:top;text-align:left}"
+                ".rt thead th{background:#FAFBFE;color:#6B7385;font-weight:700;position:sticky;top:0}"
+                ".rt-room{white-space:nowrap;font-weight:700}.rt-room small{display:block;color:#6B7385;font-weight:500}"
+                ".rt-chip{border-left:4px solid;background:#F6F8FC;border-radius:6px;padding:4px 6px;margin-bottom:4px;line-height:1.3}"
+                ".rt-chip.clash{background:#FDECEC}.rt-empty{color:#C3C8D4}</style>"
+                f"<div class='rt-wrap'><table class='rt'><thead><tr><th>강의실</th>{head}</tr></thead>"
+                f"<tbody>{''.join(body)}</tbody></table></div>", unsafe_allow_html=True)
+
+        with st.container(border=True):
+            st.markdown("#### 강의실 시간표 자세히 보기")
+            sel = st.selectbox("강의실", rooms, format_func=lambda r: f"{r} ({ds.room_map[r].capacity}석) · 시험 "
+                               f"{int((exam_rt['강의실'] == r).sum())}개")
+            evs = []
+            for r in rt[rt["강의실"] == sel].itertuples(index=False):
+                if r.종류 == "시험":
+                    evs.append(dict(day=r.day_idx, start=r.start_min, end=r.end_min, cls="dept",
+                                    color=DEPT_COLORS.get(r.학과, "#868E96"), title=r.과목 + (" ✔" if r.상태 == "확정" else ""),
+                                    sub=f"{r.시작}~{r.종료} · {r.교수} · {r.수강}명"))
+                else:
+                    evs.append(dict(day=r.day_idx, start=r.start_min, end=r.end_min, cls="mine", title=r.과목,
+                                    sub=f"정규 수업 {r.시작}~{r.종료}"))
+            st.markdown(legend([("background:#1C2E5A", "시험 (색 = 학과, ✔ = 확정)"),
+                                ("background:#E9ECF2;border:1px solid #D8DDE8", "정규 수업(시험 없음 과목)")]),
+                        unsafe_allow_html=True)
+            st.markdown(week_grid(stg, evs), unsafe_allow_html=True)
+
+        with st.container(border=True):
+            st.markdown("#### 내보내기")
+            d1, d2, _ = st.columns([1.2, 1.2, 2])
+            out = exam_rt.drop(columns=["day_idx", "start_min", "end_min"])
+            d1.download_button("강의실별 시험 시간표 CSV", to_csv_bytes(out), "room_exam_timetable.csv", "text/csv",
+                               width="stretch")
+            d2.download_button("인쇄용 시간표 (HTML)", room_timetable_html(ds, rt, stg).encode("utf-8"),
+                               "room_exam_timetable.html", "text/html", width="stretch",
+                               help="브라우저로 열고 ⌘+P 로 인쇄하거나 PDF로 저장하세요. 강의실마다 한 쪽씩 나옵니다.")
 
 # ---------------------------------------------------------------------------
 # 데이터 준비

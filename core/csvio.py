@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from .config import DEPARTMENTS
+from .config import DEPARTMENTS, GENERAL_DEPT
 from .dataset import EXAM_TYPE_ALIASES, SCHEMAS, TABLE_LABELS, Dataset, columns
 from .timeutil import hm_to_min, parse_days, parse_windows
 
@@ -147,8 +147,8 @@ def parse_table(table: str, raw: bytes) -> tuple[pd.DataFrame | None, CheckResul
                 row_err(i, f"시험방식 '{r['exam_type']}'을(를) 알 수 없습니다. 수업시간 / 별도 / 없음 중 하나로 적어 주세요.")
             else:
                 df.at[i, "exam_type"] = et
-            if r["department"] not in DEPARTMENTS:
-                row_err(i, f"개설학과 '{r['department']}'은(는) 이과대학 학과가 아닙니다.")
+            if r["department"] not in DEPARTMENTS + [GENERAL_DEPT]:
+                row_err(i, f"개설학과 '{r['department']}'은(는) 이과대학 학과가 아닙니다. (다른 단과대 과목은 '{GENERAL_DEPT}')")
             try:
                 parse_days(r["class_days"])
                 s, e = hm_to_min(r["class_start"]), hm_to_min(r["class_end"])
@@ -180,7 +180,7 @@ def parse_table(table: str, raw: bytes) -> tuple[pd.DataFrame | None, CheckResul
             if r["capacity"] <= 0:
                 row_err(i, "수용인원은 1 이상이어야 합니다.")
             deps = [d.strip() for d in r["departments"].split(",") if d.strip()]
-            bad = [d for d in deps if d not in DEPARTMENTS and d not in ("전체", "공용")]
+            bad = [d for d in deps if d not in DEPARTMENTS and d not in ("전체", "공용", GENERAL_DEPT)]
             if bad:
                 row_err(i, f"사용학과에 알 수 없는 학과가 있습니다: {', '.join(bad)} ('전체' 또는 학과명)")
     elif table == "enrollments":

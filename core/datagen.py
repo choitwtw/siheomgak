@@ -22,6 +22,7 @@ from .config import (
     EXAM_IN_CLASS,
     EXAM_NONE,
     EXAM_SEPARATE,
+    GENERAL_DEPT,
     MAX_COURSE_ENROLLMENT,
 )
 from .dataset import Dataset
@@ -70,6 +71,12 @@ CATALOG: list[tuple[str, str, str, list[int]]] = [
     ("CHM302", "무기화학", "화학과", [3]),
     ("CHM401", "고분자화학", "화학과", [4]),
 ]
+# 교양 과목 (다른 단과대학 개설) — 학생 시간표에는 있지만 시험 일정은 이 시스템이 정하지 않는다
+GENERAL_CATALOG = [
+    ("GEN101", "대학영어"), ("GEN102", "글쓰기"), ("GEN103", "세계와 시민"), ("GEN104", "인간의 가치 탐색"),
+    ("GEN105", "빅뱅에서 문명까지"), ("GEN106", "코딩과 컴퓨팅 사고"), ("GEN107", "철학과 비판적 사고"),
+    ("GEN108", "생활 속의 통계"), ("GEN109", "현대 사회와 경제"), ("GEN110", "체육과 건강"),
+]
 # 이과대학 1학년 공통 기초 과목 (모든 학과 1학년이 듣는다 → 대형 강의)
 BASIC_COURSES = {"PHY101", "MTH101", "BIO101", "CHM101"}
 DEPT_PREFIX = {"물리학과": "PHY", "수학과": "MTH", "생물학과": "BIO", "지리학과": "GEO",
@@ -99,6 +106,7 @@ class GenConfig:
     double_major_rate: float = 0.15
     minor_rate: float = 0.10
     multi_grade_rate: float = 0.30
+    n_general: int = 8          # 교양 과목 수 (0이면 교양 없음)
     exam_type_ratio: tuple[float, float, float] = (0.35, 0.55, 0.10)  # 수업시간 / 별도 / 없음
 
 
@@ -215,9 +223,16 @@ def generate(cfg: GenConfig | None = None) -> Dataset:
         c["pattern"] = chosen
         c["blocks"] = _blocks(chosen)
 
+    # ---- 2-1. 교양 과목 (강사·수업 시간) ----
+    gens = []
+    for i, (code, name) in enumerate(GENERAL_CATALOG[:max(0, cfg.n_general)]):
+        pat = rng.choice(TIME_PATTERNS)
+        gens.append(dict(code=code, name=name, dept=GENERAL_DEPT, grades=[1, 2, 3, 4], prof=f"G{i + 1:02d}",
+                         basic=False, pattern=pat, blocks=_blocks(pat), exam_type=EXAM_NONE, exam_minutes=60))
+
     # ---- 3. 학생 + 수강신청 ----
-    code_map = {c["code"]: c for c in courses}
-    count = {c["code"]: 0 for c in courses}
+    code_map = {c["code"]: c for c in courses + gens}
+    count = {c["code"]: 0 for c in courses + gens}
     students, enrollments = [], []
     seq = {d: 0 for d in DEPARTMENTS}
     for i in range(cfg.n_students):
@@ -233,7 +248,9 @@ def generate(cfg: GenConfig | None = None) -> Dataset:
         students.append(dict(student_id=sid, name=_unique_name(rng, set()), major=major, grade=grade,
                              double_major=double, minor=minor))
 
-        k = rng.choice([5, 6, 7])
+        k_total = rng.choice([5, 6, 7])
+        n_gen = 0 if not gens else (2 if grade == 1 else rng.choice([0, 1, 1]))
+        k = k_total - n_gen   # 이과대학 과목 수
         chosen: list[str] = []
         blocks: list = []
 
@@ -249,7 +266,7 @@ def generate(cfg: GenConfig | None = None) -> Dataset:
         # (1) 필수: 1학년은 기초 과목, 그 외는 주전공 해당 학년 과목
         must = [c["code"] for c in courses if c["dept"] == major and grade in c["grades"]]
         if grade == 1:
-            must = [c for c in BASIC_COURSES if c in code_map] + must
+            must = [c for c in sorted(BASIC_COURSES) if c in code_map] + must   # 정렬: 실행마다 같은 순서
         rng.shuffle(must)
         for code in must:
             if len(chosen) >= k - (1 if (double or minor) else 0):
@@ -287,6 +304,15 @@ def generate(cfg: GenConfig | None = None) -> Dataset:
                     break
             code, _ = pool.pop(j)
             try_add(code)
+        # (4) 교양: 시간이 겹치지 않는 교양 과목
+        gen_pool = [g["code"] for g in gens]
+        rng.shuffle(gen_pool)
+        added = 0
+        for code in gen_pool:
+            if added >= n_gen:
+                break
+            if try_add(code):
+                added += 1
         for code in chosen:
             enrollments.append(dict(student_id=sid, course_code=code))
 
@@ -304,6 +330,14 @@ def generate(cfg: GenConfig | None = None) -> Dataset:
         room = cands[0]
         c["room"] = room["room_id"]
         room_blocks[room["room_id"]].extend(c["blocks"])
+
+    # 교양관 강의실 (교양 전용 — 이과대학 시험에는 쓰지 않음)
+    for j, g in enumerate(sorted(gens, key=lambda g: -count[g["code"]])):
+        cap = next(x for x in (40, 60, 80, 120, 150, 200, 300) if x >= count[g["code"]])
+        no = f"{(j // 6) + 1}{(j % 6) + 1:02d}"
+        rooms.append(dict(room_id=f"교양관-{no}", building="교양관", room_no=no, capacity=cap,
+                          departments=GENERAL_DEPT))
+        g["room"] = f"교양관-{no}"
 
     # ---- 5. 시험 방식 · 시험 시간 ----
     n = len(courses)
@@ -357,12 +391,14 @@ def generate(cfg: GenConfig | None = None) -> Dataset:
              class_start=min_to_hm(c["pattern"][1]), class_end=min_to_hm(c["pattern"][2]),
              class_room=c["room"], enrollment=count[c["code"]],
              exam_type=c["exam_type"], exam_minutes=c["exam_minutes"])
-        for c in courses
+        for c in courses + gens
     ])
+    gen_profs = [dict(pid=g["prof"], name=_unique_name(rng, used_names) + " 강사", dept=GENERAL_DEPT,
+                      courses=[g["code"]], unavailable="", preferred="") for g in gens]
     df_prof = pd.DataFrame([
         dict(professor_id=p["pid"], name=p["name"], department=p["dept"], courses=",".join(p["courses"]),
              unavailable=p["unavailable"], preferred=p["preferred"])
-        for p in professors
+        for p in professors + gen_profs
     ])
     df_rooms = pd.DataFrame(rooms)
     df_enr = pd.DataFrame(enrollments)

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -27,6 +28,7 @@ from .config import (
     EXAM_SEPARATE,
     MAX_EXAMS_PER_DAY,
     SLOT_MINUTES,
+    STALL_SEC,
     W_AVOID,
     W_CONSECUTIVE,
     W_OVERLOAD,
@@ -38,7 +40,7 @@ from .constraints import CourseRequest
 from .dataset import Course, Dataset
 from .priority import dept_weights
 from .settings import Settings
-from .timeutil import DAY_MINUTES, fmt_slot
+from .timeutil import DAY_MINUTES, min_to_hm
 
 SCHEDULE_COLUMNS = ["course_code", "day", "start", "end", "room_id", "exam_type", "locked"]
 
@@ -69,9 +71,9 @@ def exam_duration(c: Course) -> int:
     return c.in_class_exam_minutes if c.exam_type == EXAM_IN_CLASS else c.exam_minutes
 
 
-def class_items(ds: Dataset) -> dict[str, list[tuple[int, int, int]]]:
-    """시험 없음 과목의 시험 주간 정규 수업 (학생·교수·강의실을 고정 점유)"""
-    return {c.code: c.class_blocks() if c.exam_type == EXAM_NONE else [] for c in ds.course_map.values()}
+def class_items(ds: Dataset, settings: Settings) -> dict[str, list[tuple[int, int, int]]]:
+    """시험 없음(교양 포함) 과목의 시험 기간 정규 수업: (시험일, 시작, 종료). 학생·교수·강의실을 고정 점유"""
+    return {c.code: settings.class_blocks(c) if c.exam_type == EXAM_NONE else [] for c in ds.course_map.values()}
 
 
 @dataclass
@@ -92,7 +94,7 @@ class _Builder:
         self.prev, self.focus, self.f = previous, focus, flags
         self.cm = ds.course_map
         self.weights = dept_weights(settings.semester)
-        self.fixed = class_items(ds)
+        self.fixed = class_items(ds, settings)
         self.exam_courses = [c for c in self.cm.values() if c.exam_type in (EXAM_IN_CLASS, EXAM_SEPARATE)]
         self.diag: list[str] = []
 
@@ -115,29 +117,29 @@ class _Builder:
         req = self.req.get(c.code) if self.f.use_requests else None
         prof_fixed, stu_fixed = self._busy(c)
         if c.exam_type == EXAM_IN_CLASS:
-            grid = [(d, c.start) for d in c.days]
+            grid = [(d, s) for d, s, _e in st.in_class_options(c)]
         else:
-            grid = [(d, m) for d in range(5) for m in range(st.day_start, st.day_end - dur + 1, SLOT_MINUTES)]
+            grid = [(d, m) for d in range(st.n_days) for m in range(st.day_start, st.day_end - dur + 1, SLOT_MINUTES)]
         out = []
         reasons: dict[str, int] = defaultdict(int)
         for d, m in grid:
             e = m + dur
             # 교수 기본 불가 시간은 별도 시험에만 (수업시간 시험은 원래 수업 시간이므로)
             if (c.exam_type == EXAM_SEPARATE and self.f.use_prof_unavail and prof
-                    and any(w.overlaps(d, m, e) for w in prof.unavailable)):
+                    and any(st.hits(w, d, m, e) for w in prof.unavailable)):
                 reasons["교수 불가 시간"] += 1
                 continue
-            if req and any(w.overlaps(d, m, e) for w in req.unavailable):
+            if req and any(st.hits(w, d, m, e) for w in req.unavailable):
                 reasons["교수님이 추가한 불가 조건"] += 1
                 continue
-            if req and req.allowed and not any(w.contains(d, m, e) for w in req.allowed):
+            if req and req.allowed and not any(st.inside(w, d, m, e) for w in req.allowed):
                 reasons["'이 시간에만' 조건"] += 1
                 continue
             if any(_overlap(d, m, e, fd, fs, fe) for fd, fs, fe in prof_fixed):
                 reasons["교수 본인의 다른 수업"] += 1
                 continue
             if any(_overlap(d, m, e, fd, fs, fe) for (fd, fs, fe) in stu_fixed):
-                reasons["수강생의 정규 수업(시험 없음 과목)"] += 1
+                reasons["수강생의 정규 수업(시험 없음·교양 과목)"] += 1
                 continue
             out.append((d, m))
         if explain:
@@ -259,7 +261,7 @@ class _Builder:
                 groups[vs] += 1
         for k, (vs, n) in enumerate(groups.items()):
             gw = max(w[c] for c in vs)
-            for d in range(5):
+            for d in range(self.st.n_days):
                 possible = [c for c in vs if any(dd == d for dd, _t in self.x[c])]
                 if len(possible) <= MAX_EXAMS_PER_DAY:
                     continue
@@ -304,9 +306,9 @@ class _Builder:
             # 교수가 직접 요청한 선호는 기본 선호보다 2배 강하게
             wp = W_PREFERENCE * w[code] * (2 if (req and req.preferred) else 1)
             for (d, t), v in self.x[code].items():
-                if pref and not any(p.contains(d, t, t + dur) for p in pref):
+                if pref and not any(self.st.inside(p, d, t, t + dur) for p in pref):
                     obj.append(wp * v)
-                if avoid and any(a.overlaps(d, t, t + dur) for a in avoid):
+                if avoid and any(self.st.hits(a, d, t, t + dur) for a in avoid):
                     obj.append(W_AVOID * w[code] * v)
 
         # ---- 되도록 4: 강의실 크기 적정화 (남는 좌석 10석 단위) ----
@@ -356,6 +358,38 @@ class _Builder:
         return pd.DataFrame(rows, columns=SCHEDULE_COLUMNS)
 
 
+class _StallWatch(cp_model.CpSolverSolutionCallback):
+    """더 좋은 해가 stall_sec 동안 안 나오면 탐색을 멈춘다 (시연 중 대기 시간 단축).
+    반드시 지킬 조건은 모든 해에서 지켜지므로, 멈춰도 결과는 항상 유효하다."""
+
+    def __init__(self, solver: cp_model.CpSolver, stall_sec: float):
+        super().__init__()
+        self.solver, self.stall_sec = solver, stall_sec
+        self.last = time.time()
+        self.found = 0
+        self.stopped_early = False
+        self._done = threading.Event()
+
+    def on_solution_callback(self):
+        self.found += 1
+        self.last = time.time()
+
+    def _watch(self):
+        while not self._done.wait(0.2):
+            if self.found and time.time() - self.last > self.stall_sec:
+                self.stopped_early = True
+                self.solver.StopSearch()
+                return
+
+    def run(self, model):
+        t = threading.Thread(target=self._watch, daemon=True)
+        t.start()
+        try:
+            return self.solver.Solve(model, self)
+        finally:
+            self._done.set()
+
+
 def _solver(time_limit: float) -> cp_model.CpSolver:
     s = cp_model.CpSolver()
     s.parameters.max_time_in_seconds = float(time_limit)
@@ -371,21 +405,29 @@ def solve(ds: Dataset, settings: Settings, requests: dict[str, CourseRequest] | 
     requests = requests or {}
     confirmed = confirmed or {}
     t0 = time.time()
+    if settings.n_days == 0:
+        return SolveResult(False, "해 없음", None, 0.0, messages=["시험 기간에 시험 가능한 날이 없습니다. 기간을 다시 설정해 주세요."])
     b = _Builder(ds, settings, requests, confirmed, previous, focus or set(), _Flags())
     b.build()
     if not b.ok_build:
         msgs = ["반드시 지킬 조건을 모두 만족하는 일정이 없습니다."] + b.diag
         return SolveResult(False, "해 없음", None, time.time() - t0, messages=msgs)
     solver = _solver(settings.time_limit)
-    status = solver.Solve(b.m)
+    watch = _StallWatch(solver, STALL_SEC)
+    status = watch.run(b.m)
     el = time.time() - t0
     stats = dict(num_exams=len(b.exam_courses),
                  num_bool=sum(len(v) for v in b.x.values()) + sum(len(v) for v in b.y.values()),
                  wall=round(solver.WallTime(), 2))
     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         sched = b.extract(solver)
-        return SolveResult(True, "최적해" if status == cp_model.OPTIMAL else "실행 가능해(시간 제한 도달)",
-                           sched, el, solver.ObjectiveValue(), stats=stats)
+        if status == cp_model.OPTIMAL:
+            label = "최적해"
+        elif watch.stopped_early:
+            label = f"근사 최적해({STALL_SEC:g}초간 개선 없음)"
+        else:
+            label = "실행 가능해(시간 제한 도달)"
+        return SolveResult(True, label, sched, el, solver.ObjectiveValue(), stats=stats)
     if status == cp_model.INFEASIBLE:
         msgs = ["반드시 지킬 조건을 모두 만족하는 일정이 없습니다."]
         if diagnose:
@@ -422,8 +464,8 @@ def diagnose_infeasible(ds: Dataset, settings: Settings, requests: dict[str, Cou
             if _overlap(x.day, x.start, ea, y.day, y.start, eb):
                 common = len(set(ds.students_of[a]) & set(ds.students_of[b]))
                 if common or x.room == y.room or cm[a].prof == cm[b].prof:
-                    msgs.append(f"확정된 **{a} {cm[a].name}**({fmt_slot(x.day, x.start, ea)})과 "
-                                f"**{b} {cm[b].name}**({fmt_slot(y.day, y.start, eb)})이 서로 겹칩니다.")
+                    msgs.append(f"확정된 **{a} {cm[a].name}**({settings.date_label(x.day)} {min_to_hm(x.start)})과 "
+                                f"**{b} {cm[b].name}**({settings.date_label(y.day)} {min_to_hm(y.start)})이 서로 겹칩니다.")
     tests = [
         ("교수님이 추가한 조건(자연어 요청)", _Flags(use_requests=False, objective=False),
          any(not r.is_empty() for r in requests.values())),

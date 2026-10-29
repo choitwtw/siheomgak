@@ -14,6 +14,9 @@ DEPARTMENTS: list[str] = [
     "화학과",
 ]
 
+# 이과대학 밖에서 듣는 교양 과목 (시험 일정은 우리가 정하지 않음 → 정규 수업 시간을 막아 둔다)
+GENERAL_DEPT = "교양"
+
 # 화면용 학과 색상 (남색 계열 포인트와 어울리는 차분한 팔레트)
 DEPT_COLORS: dict[str, str] = {
     "물리학과": "#3B5BDB",
@@ -22,9 +25,11 @@ DEPT_COLORS: dict[str, str] = {
     "지리학과": "#AE3EC9",
     "정보디스플레이학과": "#1098AD",
     "화학과": "#D6336C",
+    GENERAL_DEPT: "#868E96",
 }
 
-DAYS: list[str] = ["월", "화", "수", "목", "금"]
+DAYS: list[str] = ["월", "화", "수", "목", "금"]          # 정규 수업 요일
+WEEKDAYS: list[str] = ["월", "화", "수", "목", "금", "토", "일"]
 DAY_FULL: dict[str, str] = {d: d + "요일" for d in DAYS}
 
 # ---- 시험 방식 ----
@@ -46,6 +51,7 @@ SLOT_MINUTES = 30            # 시작 시각 단위
 CONSECUTIVE_GAP_MIN = 30     # 이 값 미만 간격이면 '연속 시험'
 MAX_EXAMS_PER_DAY = 2        # 학생 1명당 하루 최대 시험 수 (되도록)
 DEFAULT_TIME_LIMIT_SEC = 20
+STALL_SEC = 6               # 더 좋은 해가 이 시간 동안 안 나오면 탐색 종료
 
 # ---- 최적화 벌점 가중치 (되도록 지킬 조건) ----
 W_OVERLOAD = 100      # 하루 3과목 이상 시험 학생 1명(초과 1과목)당
