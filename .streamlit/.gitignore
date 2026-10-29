@@ -1,0 +1,14 @@
+# 가상환경 / 캐시
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+
+# API 키 (절대 커밋 금지)
+.streamlit/secrets.toml
+.env
+
+# 실행 중 생성되는 파일
+output/
