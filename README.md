@@ -1,0 +1,200 @@
+# 📅 시험각 — 충돌 없는 시험 일정·강의실 자동 배정
+
+> 경희대학교 AI 활용 경진대회 출품작
+
+교수들이 시험 일정을 잡을 때 수강생들의 다른 시험과 겹치지 않는지 일일이 확인하는 일을 없애 줍니다.
+수강신청이 끝난 **학생 시간표**와 **교수 일정**을 바탕으로 **충돌 없는 시험 일정과 강의실**을 자동으로 배정하고,
+교수가 **말로(자연어로) 조건을 바꾸면** AI가 조건으로 바꿔 다시 배정합니다.
+
+| 화면 | 할 수 있는 일 |
+|---|---|
+| 관리자 대시보드 | 학기 선택 → 학과 우선순위 자동 계산, 가상 데이터 생성/CSV 업로드, 전체 배정 실행, 핵심 지표, 무작위 배정 대비 개선 비교 |
+| 교수 화면 | 내 과목 추천 일정 + 이유·경고, 자연어 수정 → 변환 결과 확인 → 재배정 → 변경 전/후 비교 → 확정 |
+| 학생 화면 | 학번 입력 → 시험 주간 캘린더(정규 수업 + 시험), 시험 확정 알림함 |
+| 강의실 현황 | 요일별 강의실 점유 타임라인 (학과별 색상) |
+
+API 키가 없어도 모든 화면이 작동합니다 (규칙 기반 **대체 모드**). 키를 넣으면 Claude가 자연어 변환과 설명 문장을 맡습니다.
+
+---
+
+## 1. 내 Mac에서 실행하기 (처음 하는 분 기준)
+
+### 1-1. 터미널 열기
+`⌘ + Space` → "터미널" 입력 → 엔터.
+
+### 1-2. Python 버전 확인
+```bash
+python3 --version
+```
+- `Python 3.10` 이상(예: `Python 3.12.4`)이 나오면 **1-3**으로.
+- `command not found` 가 나오거나 3.9 이하라면 아래 **방법 A(uv, 추천)** 로 Python을 함께 설치합니다.
+
+### 1-3. 프로젝트 폴더로 이동
+이 저장소를 내려받은 폴더로 이동합니다. (예: 바탕화면에 `siheomgak` 폴더가 있다면)
+```bash
+cd ~/Desktop/siheomgak
+```
+> GitHub에서 받는 경우: `git clone https://github.com/<내-아이디>/siheomgak.git` 후 `cd siheomgak`
+
+### 1-4. 가상환경 만들고 패키지 설치
+
+**방법 A — uv 사용 (추천, Python이 없어도 됨)**
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh     # uv 설치 (한 번만)
+source $HOME/.local/bin/env                          # 또는 터미널을 껐다 켜기
+uv venv --python 3.12 .venv                          # Python 3.12 가상환경 생성 (자동 다운로드)
+source .venv/bin/activate
+uv pip install -r requirements.txt
+```
+
+**방법 B — 이미 Python 3.10 이상이 있을 때**
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### 1-5. 실행
+```bash
+streamlit run app.py
+```
+브라우저가 자동으로 열립니다 (안 열리면 `http://localhost:8501` 접속).
+처음 화면을 열면 가상 데이터로 자동 배정이 한 번 실행됩니다 (보통 10초 안팎, 최대 20초).
+
+다음부터는 폴더로 이동한 뒤 `source .venv/bin/activate` → `streamlit run app.py` 두 줄이면 됩니다.
+
+### 1-6. (선택) Claude API 키 넣기
+키가 없으면 대체 모드로 작동합니다. AI 모드를 쓰려면 둘 중 하나:
+
+- 터미널에서 실행 전에: `export ANTHROPIC_API_KEY="sk-ant-..."`
+- 또는 `.streamlit/secrets.toml.example` 을 `.streamlit/secrets.toml` 로 복사하고 키를 적기
+  ```bash
+  cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+  open -e .streamlit/secrets.toml      # 텍스트 편집기로 열어 키 입력 후 저장
+  ```
+`secrets.toml` 은 `.gitignore` 에 들어 있어 GitHub에 올라가지 않습니다. 화면 오른쪽 아래에 현재 모드가 표시됩니다.
+
+### 1-7. 테스트 실행
+```bash
+pytest -q
+```
+41개 테스트(데이터 생성·CSV 검증·우선순위 순환·검증기·배정 엔진·자연어 변환·AI 실패 시 대체)가 모두 통과해야 합니다.
+
+---
+
+## 2. Streamlit Community Cloud로 무료 배포하기
+
+### 2-1. GitHub에 올리기
+이 폴더에는 이미 git 커밋 기록(`.git` 숨김 폴더)이 들어 있습니다. API 키 파일(`secrets.toml`)은 올라가지 않습니다.
+
+**방법 A — GitHub Desktop (클릭만으로, 처음이라면 추천)**
+1. https://desktop.github.com 에서 GitHub Desktop 설치 → 실행 → **Sign in to GitHub.com** 으로 로그인.
+2. 메뉴 **File → Add Local Repository…** → `siheomgak` 폴더 선택 → **Add Repository**.
+3. 위쪽 **Publish repository** 클릭 → Name `siheomgak`, **Keep this code private** 체크 해제(공개 저장소) → **Publish Repository**.
+4. 브라우저에서 `https://github.com/<내-아이디>/siheomgak` 에 파일이 보이면 완료.
+5. 나중에 코드를 고치면: GitHub Desktop 왼쪽 아래에 변경 요약 입력 → **Commit to main** → 위쪽 **Push origin**.
+
+**방법 B — 터미널 (GitHub CLI)**
+```bash
+brew install gh            # Homebrew가 없으면 https://brew.sh 의 설치 명령을 먼저 실행
+gh auth login              # GitHub.com → HTTPS → Login with a web browser 선택, 화면의 코드 입력
+cd ~/Desktop/siheomgak
+gh repo create siheomgak --public --source=. --push
+```
+
+**방법 C — 웹에서 빈 저장소를 만든 뒤 push**
+1. https://github.com 오른쪽 위 **+** → **New repository** → 이름 `siheomgak`, README 추가 체크는 **하지 않음** → **Create repository**.
+2. 터미널에서 (프로젝트 폴더 안):
+   ```bash
+   git remote add origin https://github.com/<내-아이디>/siheomgak.git
+   git push -u origin main
+   ```
+   비밀번호를 물으면 GitHub 비밀번호가 아니라 **Personal access token**을 넣어야 합니다 (Settings → Developer settings → Personal access tokens). 번거로우면 방법 A·B를 쓰세요.
+
+### 2-2. Streamlit Cloud에서 앱 만들기
+1. https://share.streamlit.io 접속 → **Continue with GitHub** 로 로그인.
+2. **Create app** → **Deploy a public app from GitHub**.
+3. Repository: `<내-아이디>/siheomgak`, Branch: `main`, Main file path: `app.py`.
+4. **Advanced settings** → Python version **3.12** 선택.
+5. (AI 모드를 쓸 경우) 같은 창의 **Secrets** 칸에 아래 한 줄 입력:
+   ```toml
+   ANTHROPIC_API_KEY = "sk-ant-..."
+   ```
+6. **Deploy** 클릭 → 몇 분 뒤 `https://<앱이름>.streamlit.app` 주소가 생깁니다.
+
+배포 후 키를 바꾸려면: 앱 화면 오른쪽 아래 **Manage app** → **⋮** → **Settings** → **Secrets**.
+
+> 무료 서버는 CPU가 적어서 배정 시간이 로컬보다 길 수 있습니다. 20초 제한에 걸리면 그때까지 찾은 가장 좋은 해(실행 가능해)를 보여 주며, 반드시 지킬 조건은 그 경우에도 항상 지켜집니다. 관리자 화면에서 제한 시간을 늘릴 수 있습니다.
+
+---
+
+## 3. 시연 순서 (본선용)
+
+1. **관리자 대시보드** — 학기(예: 26-2) 선택 → 우선순위 표(수학과 1순위) 확인 → **⚡ 전체 배정 실행** → "반드시 지킬 조건 위반 0건", 무작위 배정 대비 충돌 학생 250여 명 → 0명.
+2. **교수 화면** — 교수 선택 → 과목 카드에서 추천 이유·경고 확인.
+3. 예시 문장 **"목요일 오후는 안 되고, 가능하면 오전으로"** 클릭 → **조건으로 변환하기** → 해석 결과 확인 → **이 조건으로 재배정** → 변경 전/후 비교.
+4. **✅ 확정** → "수강생 N명에게 알림을 보냈습니다".
+5. **학생 화면** — 🔔 표시된 학생 선택 → 알림함 "OO 과목 시험이 X월 X일 X시 OO호로 확정되었습니다", 캘린더에 남색(확정) 블록.
+6. **강의실 현황** — 요일별 타임라인에서 ✔(확정) 표시 확인.
+
+---
+
+## 4. 배정 규칙
+
+**반드시 지킬 조건** (하나라도 어기면 결과로 인정하지 않음 — 별도 검증기가 매번 다시 검사)
+1. 같은 학생의 시험끼리, 그리고 수업시간 시험·진행 중인 정규 수업(시험 없음 과목)과 시간이 겹치지 않음
+2. 교수 불가 시간 배정 금지, 같은 교수의 시험끼리 겹치지 않음
+3. 강의실 수용인원 ≥ 수강인원, 같은 강의실·같은 시간에 두 시험 불가 (강의실 사용학과 제한 포함)
+4. 교수가 확정한 시험은 이후 재배정에서도 바뀌지 않음
+
+**되도록 지킬 조건** (벌점 최소화, 학과 우선순위 배수를 곱함)
+
+| 조건 | 기본 벌점 |
+|---|---|
+| 학생 하루 3과목 이상 시험 (초과 1과목당) | 100 |
+| 연속 시험 (앞 시험 종료 ~ 다음 시험 시작 30분 미만, 학생 1명당) | 20 |
+| 교수 선호 시간 미반영 (교수가 직접 요청한 선호는 2배) | 50 |
+| 강의실 남는 좌석 (10석당) | 3 |
+
+**학과 우선순위 순환**: 기준 순서 물리 → 수학 → 생물 → 지리 → 정보디스플레이 → 화학. 26-1학기 물리학과 1순위, 26-2학기 수학과, 27-1학기 생물학과 … 매 학기 한 칸씩. 1순위 6배 … 6순위 1배.
+
+**시험 방식**
+- 수업시간 시험: 시험 주간의 정규 수업 요일·시각·강의실에서 시행. 주 2회 수업이면 두 회차 중 하루를 엔진이 고릅니다 (나머지 회차 휴강).
+- 별도 시험: 엔진이 시간(30분 단위 시작)과 강의실을 배정.
+- 시험 없음(과제 대체): 정규 수업이 계속 진행되어 수강생은 그 시간에 다른 시험 불가.
+
+---
+
+## 5. 폴더 구조
+
+```
+app.py                  진입점 (streamlit run app.py)
+views/                  화면: admin.py, professor.py, student.py, rooms.py
+ui/                     세션 상태(state.py), 디자인(style.py), 표 변환(tables.py)
+core/
+  config.py             설정 상수 (가중치, LLM 모델명 등)
+  datagen.py            가상 데이터 생성기 (시드 고정)
+  csvio.py              CSV 업로드·다운로드·검증 (한국어 오류 메시지)
+  scheduler.py          배정 엔진 (OR-Tools CP-SAT) + 해 없음 원인 분석
+  validator.py          독립 검증기 (반드시 지킬 조건 위반 수 + 품질 지표)
+  baseline.py           비교 기준: 수작업(무작위) 배정
+  explain.py            배정 이유·경고·대안(영향 분석) 계산
+  nlparse.py            자연어 → 조건 (Claude, 실패 시 규칙 기반)
+  llm.py                Claude API 연결 (키: 환경변수 / st.secrets)
+  constraints.py        교수 요청 조건 JSON 스키마·검증
+  priority.py           학기별 학과 우선순위 순환
+prompts/                LLM 프롬프트 (조건 변환, 이유 설명, 영향 분석)
+data/templates/         빈 CSV 템플릿 + 컬럼 설명 README
+data/sample/            기본 가상 데이터 CSV (시드 42)
+tests/                  pytest
+DEVLOG.md               개발 기록 (AI 활용 과정)
+```
+
+## 6. CSV로 데이터 바꾸기
+관리자 대시보드 → **🗂️ 데이터 준비** 탭에서 업로드합니다. 컬럼 설명은 [`data/templates/README.md`](data/templates/README.md).
+틀린 값이 있으면 "몇 행, 어떤 컬럼, 무엇이 문제인지" 한국어로 알려 줍니다. 결과 일정표는 같은 화면에서 CSV/ZIP으로 내려받을 수 있습니다.
+
+## 7. 설정 바꾸기
+- 화면에서: 학기, 시험 주간 시작일, 하루 시간대(기본 09:00~18:00), 풀이 시간 제한(기본 20초), 가상 데이터 규모(학생·과목·교수·강의실 수, 시드).
+- 코드에서: `core/config.py` — 벌점 가중치, 30분 단위, LLM 모델명(`LLM_MODEL`).
