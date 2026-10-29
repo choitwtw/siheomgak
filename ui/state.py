@@ -35,12 +35,18 @@ def now_text() -> str:
     return datetime.now(KST).strftime("%m/%d %H:%M")
 
 
+STATE_VERSION = 2   # 세션 상태 구조가 바뀌면 올린다
+
+
 def init_state():
-    if "ds" in S:
+    """앱을 처음 열었을 때, 또는 새 버전이 배포되어 열려 있던 탭의 상태가 옛 구조일 때 새로 만든다."""
+    if ("ds" in S and S.get("state_version") == STATE_VERSION
+            and isinstance(S.get("settings"), Settings) and isinstance(S.get("ds"), Dataset)):
         return
     S.ds = generate(GenConfig())
     S.gen_cfg = GenConfig()
     S.settings = Settings()
+    S.state_version = STATE_VERSION
     _reset_work()
 
 
