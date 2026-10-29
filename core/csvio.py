@@ -179,6 +179,10 @@ def parse_table(table: str, raw: bytes) -> tuple[pd.DataFrame | None, CheckResul
         for i, r in df.iterrows():
             if r["capacity"] <= 0:
                 row_err(i, "수용인원은 1 이상이어야 합니다.")
+            if r["exam_capacity"] not in ("", "nan"):
+                ec = int(float(r["exam_capacity"]))
+                if not 0 < ec <= r["capacity"]:
+                    row_err(i, f"시험좌석({ec})은 1 이상, 수용인원({r['capacity']}) 이하여야 합니다.")
             deps = [d.strip() for d in r["departments"].split(",") if d.strip()]
             bad = [d for d in deps if d not in DEPARTMENTS and d not in ("전체", "공용", GENERAL_DEPT)]
             if bad:
@@ -261,8 +265,8 @@ def sanity_warnings(ds: Dataset) -> CheckResult:
         r = rooms.get(c.room)
         if r and r.capacity < c.enrollment:
             res.warnings.append(f"[과목] {c.code} {c.name}: 정규강의실 수용인원({r.capacity})이 수강인원({c.enrollment})보다 작습니다.")
-        if not any(rm.capacity >= c.enrollment and rm.allows(c.dept) for rm in rooms.values()):
-            res.warnings.append(f"[과목] {c.code} {c.name}: 수강인원 {c.enrollment}명을 수용할 수 있는 강의실이 없습니다.")
+        if c.exam_type == "별도" and not any(rm.exam_capacity >= c.enrollment and rm.allows(c.dept) for rm in rooms.values()):
+            res.warnings.append(f"[과목] {c.code} {c.name}: 수강인원 {c.enrollment}명을 시험 좌석 기준으로 수용할 강의실이 없습니다.")
     # 학생 정규 수업 겹침 (수강신청 데이터 오류)
     cm = ds.course_map
     bad = 0

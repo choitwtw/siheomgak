@@ -50,7 +50,7 @@ def manual_schedule(ds: Dataset, settings: Settings, seed: int = 0) -> pd.DataFr
               if not (prof and any(settings.hits(w, d, m, m + dur) for w in prof.unavailable))
               and free(prof_busy.get(c.prof, []), d, m, m + dur)]
         d, m = rng.choice(ok or grid)
-        rooms = [r for r in rm.values() if r.capacity >= c.enrollment and r.allows(c.dept)]
+        rooms = [r for r in rm.values() if r.exam_capacity >= c.enrollment and r.allows(c.dept)]
         free_rooms = [r for r in rooms if free(room_busy[r.rid], d, m, m + dur)]
         room = rng.choice(free_rooms or rooms or list(rm.values()))
         room_busy[room.rid].append((d, m, m + dur))

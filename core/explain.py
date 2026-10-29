@@ -87,11 +87,11 @@ def slot_map(ds: Dataset, schedule: pd.DataFrame, settings: Settings,
     else:
         grid = [(d, m) for d in range(settings.n_days)
                 for m in range(settings.day_start, settings.day_end - dur + 1, SLOT_MINUTES)]
-        rooms = [r for r in rm.values() if r.capacity >= c.enrollment and r.allows(c.dept)
+        rooms = [r for r in rm.values() if r.exam_capacity >= c.enrollment and r.allows(c.dept)
                  and not (req and req.min_capacity and r.capacity < req.min_capacity)
                  and not (req and req.building and req.building not in r.building)
                  and not (req and req.room_ids and r.rid not in req.room_ids)]
-        rooms.sort(key=lambda r: r.capacity)
+        rooms.sort(key=lambda r: (r.exam_capacity, r.rid))
     out = []
     for d, m in grid:
         e = m + dur
@@ -112,7 +112,8 @@ def slot_map(ds: Dataset, schedule: pd.DataFrame, settings: Settings,
         if busy:
             out.append(dict(base, status="blocked", reason=f"수강생 {len(busy)}명 시간 겹침", conflicts=len(busy)))
             continue
-        room = next((r for r in rooms if not any(_ov(d, m, e, i.day, i.start, i.end) for i in room_items[r.rid])), None)
+        free_rooms = [r for r in rooms if not any(_ov(d, m, e, i.day, i.start, i.end) for i in room_items[r.rid])]
+        room = free_rooms[0] if free_rooms else None   # 가장 알맞은(시험 좌석이 가장 적게 남는) 강의실
         if room is None:
             out.append(dict(base, status="blocked", reason="빈 강의실 없음"))
             continue
@@ -126,9 +127,11 @@ def slot_map(ds: Dataset, schedule: pd.DataFrame, settings: Settings,
         pref_met = (not prefs) or any(settings.inside(p, d, m, e) for p in prefs)
         avoid = bool(req and any(settings.hits(w, d, m, e) for w in req.avoid))
         score = (W_OVERLOAD * overload + W_CONSECUTIVE * consec + (0 if pref_met else W_PREFERENCE)
-                 + (W_AVOID if avoid else 0) + W_ROOM_WASTE * ((room.capacity - c.enrollment + 5) // 10))
+                 + (W_AVOID if avoid else 0) + W_ROOM_WASTE * ((room.exam_capacity - c.enrollment + 5) // 10))
         out.append(dict(base, status="burden" if (overload or consec) else "ok", room=room.rid,
-                        capacity=room.capacity, overload=overload, consecutive=consec, pref_met=pref_met,
+                        capacity=room.capacity, exam_capacity=room.exam_capacity,
+                        rooms=[dict(rid=r.rid, cap=r.capacity, exam_cap=r.exam_capacity) for r in free_rooms],
+                        overload=overload, consecutive=consec, pref_met=pref_met,
                         has_pref=bool(prefs), avoid=avoid, score=score, conflicts=0))
     return out
 
@@ -152,6 +155,7 @@ def course_facts(ds: Dataset, schedule: pd.DataFrame, settings: Settings, reques
         "exam_type": c.exam_type, "day": d, "day_name": settings.date_label(d), "date": settings.date_label(d),
         "start": min_to_hm(s), "end": min_to_hm(e), "minutes": e - s,
         "room": r.room_id, "room_capacity": room.capacity if room else None,
+        "room_exam_capacity": room.exam_capacity if room else None,
         "enrollment": c.enrollment, "student_conflicts": 0,
         "overload_students": int(pc.get("overload_students", 0)),
         "consecutive_students": int(pc.get("consecutive_students", 0)),
@@ -169,7 +173,7 @@ def course_facts(ds: Dataset, schedule: pd.DataFrame, settings: Settings, reques
                 "when": f"{settings.date_label(b['day'])} {min_to_hm(b['start'])}",
                 "overload_students": b["overload"], "consecutive_students": b["consecutive"]}
     if room:
-        facts["empty_seats"] = room.capacity - c.enrollment
+        facts["empty_seats"] = room.exam_capacity - c.enrollment    # 시험 좌석 기준 남는 자리
     if pc.get("in_avoid"):
         facts["in_avoid_window"] = True
     facts["warnings"] = warnings_for(facts)
@@ -196,8 +200,11 @@ def warnings_for(f: dict) -> list[str]:
             w.append(f"선호 시간({p['text']})을 반영하지 못했습니다 — 학생 부담·강의실·학과 우선순위를 함께 고려한 결과")
     if f.get("in_avoid_window"):
         w.append("요청하신 '되도록 피할 시간'에 배정되었습니다 — 다른 시간대에는 충돌 없는 배정이 어렵습니다")
-    if f.get("room_capacity") and f.get("empty_seats", 0) > max(30, f["room_capacity"] * 0.5):
-        w.append(f"강의실 여유 좌석이 {f['empty_seats']}석으로 큽니다 (그 시간에 더 알맞은 강의실이 비어 있지 않음)")
+    if f.get("room_exam_capacity") and f.get("empty_seats", 0) > max(30, f["room_exam_capacity"] * 0.5):
+        w.append(f"시험 좌석이 {f['empty_seats']}석 남습니다 (그 시간에 더 알맞은 강의실이 비어 있지 않음)")
+    if f.get("exam_type") == EXAM_IN_CLASS and f.get("empty_seats", 0) < 0:
+        w.append(f"정규 강의실의 시험 좌석(띄어 앉기 {f['room_exam_capacity']}석)이 수강인원 {f['enrollment']}명보다 적습니다 "
+                 "— 띄어 앉기가 어려우면 별도 시험으로 바꾸는 것을 검토하세요")
     return w
 
 
@@ -209,7 +216,7 @@ def template_reason(f: dict) -> str:
             f"하루 3과목 이상 학생 {f['overload_students']}명",
             f"연속 시험 학생 {f['consecutive_students']}명"]
     if f.get("room_capacity"):
-        bits.append(f"수용인원 {f['room_capacity']}석 강의실({f['room']}) 배정")
+        bits.append(f"{f['room']} 강의실(좌석 {f['room_capacity']}석 · 시험 좌석 {f['room_exam_capacity']}석) 배정")
     p = f.get("preference")
     if p and p["met"]:
         bits.append(f"교수 선호 시간({p['text']}) 반영")

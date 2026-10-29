@@ -35,7 +35,7 @@ def now_text() -> str:
     return datetime.now(KST).strftime("%m/%d %H:%M")
 
 
-STATE_VERSION = 2   # 세션 상태 구조가 바뀌면 올린다
+STATE_VERSION = 3   # 세션 상태 구조가 바뀌면 올린다
 
 
 def init_state():

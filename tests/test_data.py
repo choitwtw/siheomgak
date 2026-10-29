@@ -78,3 +78,18 @@ def test_generator_same_across_processes():
     outs = {subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True,
                            env={**os.environ, "PYTHONHASHSEED": str(h)}).stdout for h in (1, 2, 3)}
     assert len(outs) == 1 and len(next(iter(outs))) > 10
+
+
+def test_rooms_exam_capacity_csv(default_data):
+    """시험좌석 컬럼: 비우면 좌석의 2/3, 좌석보다 크면 오류"""
+    rooms = default_data.rooms.astype(str)
+    rooms.loc[0, "exam_capacity"] = ""
+    df, res = parse_table("rooms", to_csv_bytes(rooms))
+    assert res.ok
+    from core.dataset import Dataset
+    ds = Dataset(default_data.students, default_data.courses, default_data.professors, df, default_data.enrollments)
+    r0 = ds.room_map[df.loc[0, "room_id"]]
+    assert r0.exam_capacity == int(r0.capacity * 2 / 3)
+    rooms.loc[1, "exam_capacity"] = str(int(rooms.loc[1, "capacity"]) + 10)
+    df, res = parse_table("rooms", to_csv_bytes(rooms))
+    assert df is None and "시험좌석" in res.errors[0]

@@ -181,3 +181,37 @@ def test_availability_fixed_only_shows_more_options(default_data, default_result
         loose = [x for x in slot_map(default_data, default_result.schedule, st, {}, code, fixed_only=True) if x["status"] != "blocked"]
         tight = [x for x in slot_map(default_data, default_result.schedule, st, {}, code) if x["status"] != "blocked"]
         assert len(loose) >= len(tight) >= 1     # 현재 배정 시각은 항상 가능
+
+
+def test_separate_exams_fit_exam_seats(default_data, default_result):
+    """별도 시험은 시험 좌석(띄어 앉기 기준)이 수강인원 이상인 강의실에 배정된다"""
+    rm = default_data.room_map
+    for r in default_result.schedule.itertuples(index=False):
+        c = default_data.course_map[r.course_code]
+        if c.exam_type == "별도":
+            assert rm[r.room_id].exam_capacity >= c.enrollment, (c.code, r.room_id)
+    assert all(0 < x.exam_capacity <= x.capacity for x in rm.values())
+
+
+def test_move_request_to_exact_slot_and_room(small_data):
+    """교수가 시간표에서 끌어다 놓은 시각·강의실(이 시간에만 + 강의실 지정)이 그대로 반영된다"""
+    from core.explain import slot_map
+    r0 = solve(small_data, ST)
+    code = r0.schedule[r0.schedule.exam_type == "별도"].iloc[0].course_code
+    cur = r0.schedule.set_index("course_code").loc[code]
+    cands = [x for x in slot_map(small_data, r0.schedule, ST, {}, code, fixed_only=True)
+             if x["status"] != "blocked" and (x["day"], x["start"]) != (int(cur.day), int(cur.start))]
+    x = cands[0]
+    room = x["rooms"][-1]["rid"]
+    req = {code: validate_request({"allowed": [{"day": ST.day_name(x["day"]), "start": H_(x["start"]), "end": H_(x["end"])}],
+                                   "room": {"min_capacity": None, "building": None, "room_ids": [room]}})}
+    r1 = solve(small_data, ST, requests=req, previous=r0.schedule, focus={code})
+    assert r1.ok, r1.messages
+    new = r1.schedule.set_index("course_code").loc[code]
+    assert (int(new.day), int(new.start), new.room_id) == (x["day"], x["start"], room)
+    assert validate(small_data, r1.schedule, ST, requests=req).hard_count == 0
+
+
+def H_(m):
+    from core.timeutil import min_to_hm
+    return min_to_hm(m)

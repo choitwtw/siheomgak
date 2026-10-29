@@ -31,7 +31,8 @@ def schedule_table(ds: Dataset, schedule: pd.DataFrame, settings: Settings) -> p
             "방식": type_label(c),
             "날짜": settings.date_label(int(r.day)),
             "시간": f"{min_to_hm(r.start)}~{min_to_hm(r.end)}",
-            "강의실": r.room_id, "수용": room.capacity if room else None, "수강": c.enrollment,
+            "강의실": r.room_id, "좌석": room.capacity if room else None,
+            "시험좌석": room.exam_capacity if room else None, "수강": c.enrollment,
             "상태": "확정" if r.locked else "추천",
         })
     return pd.DataFrame(rows)
@@ -48,6 +49,7 @@ def schedule_export(ds: Dataset, schedule: pd.DataFrame, settings: Settings) -> 
                         day=settings.day_name(int(r.day)), start=min_to_hm(r.start), end=min_to_hm(r.end),
                         minutes=int(r.end) - int(r.start), room_id=r.room_id,
                         room_capacity=rm[r.room_id].capacity if r.room_id in rm else None,
+                        room_exam_capacity=rm[r.room_id].exam_capacity if r.room_id in rm else None,
                         enrollment=c.enrollment, confirmed=bool(r.locked)))
     return pd.DataFrame(out)
 
@@ -61,7 +63,8 @@ def room_timetable(ds: Dataset, schedule: pd.DataFrame, settings: Settings, conf
     def add(rid, day, s, e, c, kind, status):
         room = rm.get(rid)
         rows.append({
-            "건물": room.building if room else "", "강의실": rid, "수용": room.capacity if room else None,
+            "건물": room.building if room else "", "강의실": rid, "좌석": room.capacity if room else None,
+            "시험좌석": room.exam_capacity if room else None,
             "날짜": settings.date_of(day).isoformat(), "요일": settings.day_name(day),
             "시작": min_to_hm(s), "종료": min_to_hm(e), "종류": kind,
             "과목코드": c.code, "과목": c.name, "학과": c.dept,
@@ -101,8 +104,9 @@ def room_timetable_html(ds: Dataset, rt: pd.DataFrame, settings: Settings) -> st
                 parts.append(f"<div class='it' style='border-left-color:{color}'><b>{r.시작}–{r.종료}</b><br>"
                              f"{html.escape(r.과목)}{mark}{tag}<br><span>{html.escape(r.교수)} · {r.수강}명</span></div>")
             cells.append(f"<td>{''.join(parts) or '–'}</td>")
-        cap = int(rows["수용"].iloc[0]) if len(rows) else ""
-        pages.append(f"<section><h2>{html.escape(rid)} <small>{cap}석</small></h2>"
+        cap = int(rows["좌석"].iloc[0]) if len(rows) else ""
+        ecap = int(rows["시험좌석"].iloc[0]) if len(rows) else ""
+        pages.append(f"<section><h2>{html.escape(rid)} <small>좌석 {cap}석 · 시험 좌석 {ecap}석</small></h2>"
                      f"<table><thead><tr>{head}</tr></thead><tbody><tr>{''.join(cells)}</tr></tbody></table></section>")
     title = f"시험 기간 강의실별 시간표 ({settings.period_label()})"
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>{html.escape(title)}</title>

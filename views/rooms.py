@@ -61,7 +61,7 @@ metric_cards([
 # ---- 타임라인 ----
 rooms = [r for r in rm.values() if not bsel or r.building in bsel]
 rooms.sort(key=lambda r: (r.building, -r.capacity, r.room_no))
-room_labels = {r.rid: f"{r.rid} ({r.capacity}석)" for r in rooms}
+room_labels = {r.rid: f"{r.rid} (좌석 {r.capacity} · 시험 {r.exam_capacity})" for r in rooms}
 show = dd[dd.room.isin(room_labels)]
 only_used = st.toggle("사용 중인 강의실만 보기", value=True)
 if only_used:

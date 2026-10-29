@@ -6,7 +6,7 @@ from functools import cached_property
 
 import pandas as pd
 
-from .config import DEPARTMENTS, EXAM_IN_CLASS, EXAM_NONE, EXAM_SEPARATE
+from .config import DEPARTMENTS, EXAM_IN_CLASS, EXAM_NONE, EXAM_SEAT_RATIO, EXAM_SEPARATE
 from .timeutil import Window, hm_to_min, parse_days, parse_windows
 
 # ---------------------------------------------------------------------------
@@ -49,6 +49,8 @@ SCHEMAS: dict[str, list[tuple[str, str, str, bool, str, str]]] = {
         ("building", "건물", "str", True, "건물 이름", "이과대학"),
         ("room_no", "호실", "str", True, "호실 번호", "101"),
         ("capacity", "수용인원", "int", True, "좌석 수", "80"),
+        ("exam_capacity", "시험좌석", "int", False,
+         "시험 볼 때 수용 가능 인원(띄어 앉기 기준). 비우면 좌석 수의 2/3", "53"),
         ("departments", "사용학과", "str", True, "사용 가능 학과, 쉼표 구분. 모든 학과 공용이면 '전체'", "물리학과,수학과"),
     ],
     "enrollments": [
@@ -129,8 +131,9 @@ class Room:
     rid: str
     building: str
     room_no: str
-    capacity: int
+    capacity: int            # 좌석 수 (정규 수업 기준)
     departments: list[str]   # 빈 리스트 = 전체 공용
+    exam_capacity: int = 0   # 시험 좌석 (띄어 앉기 기준) — 별도 시험 배정에 사용
 
     def allows(self, dept: str) -> bool:
         return not self.departments or dept in self.departments
@@ -195,7 +198,13 @@ class Dataset:
             deps = [d.strip() for d in str(r.departments).split(",") if d.strip()]
             if any(d in ("전체", "공용", "all") for d in deps):
                 deps = []
-            out[r.room_id] = Room(r.room_id, str(r.building), str(r.room_no), int(r.capacity), deps)
+            cap = int(r.capacity)
+            raw = getattr(r, "exam_capacity", "")
+            try:
+                exam_cap = int(float(raw)) if str(raw).strip() not in ("", "nan", "None") else exam_seats(cap)
+            except ValueError:
+                exam_cap = exam_seats(cap)
+            out[r.room_id] = Room(r.room_id, str(r.building), str(r.room_no), cap, deps, min(exam_cap, cap))
         return out
 
     @cached_property
@@ -241,6 +250,11 @@ class Dataset:
         for k, v in changes.items():
             courses.loc[idx, k] = v
         return Dataset(self.students, courses, self.professors, self.rooms, self.enrollments, dict(self.meta))
+
+
+def exam_seats(capacity: int) -> int:
+    """좌석 수 → 시험 좌석 (띄어 앉기 기준 기본값)"""
+    return int(capacity * EXAM_SEAT_RATIO)
 
 
 def dept_valid(name: str) -> bool:

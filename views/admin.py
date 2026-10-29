@@ -209,7 +209,8 @@ with tab_run:
                 tbl = tbl[tbl["상태"].isin(ssel)]
             st.dataframe(tbl, hide_index=True, width="stretch", height=420,
                          column_config={"순위": st.column_config.NumberColumn(width="small"),
-                                        "수용": st.column_config.NumberColumn(width="small"),
+                                        "좌석": st.column_config.NumberColumn(width="small"),
+                                        "시험좌석": st.column_config.NumberColumn(width="small"),
                                         "수강": st.column_config.NumberColumn(width="small")})
             e1, e2, _ = st.columns([1, 1, 3])
             exp = schedule_export(ds, S.schedule, S.settings)
@@ -315,7 +316,8 @@ with tab_rooms:
 
         with st.container(border=True):
             st.markdown("#### 강의실 × 날짜 한눈에 보기")
-            st.caption("칸마다 그날 그 강의실의 시험을 시간 순으로 보여 줍니다. ✔ = 교수 확정. 겹치는 시험이 있으면 빨간색으로 표시됩니다.")
+            st.caption("칸마다 그날 그 강의실의 시험을 시간 순으로 보여 줍니다. ✔ = 교수 확정. 겹치는 시험이 있으면 빨간색으로 표시됩니다. "
+                       "시험 좌석 = 띄어 앉기 기준으로 시험 볼 때 수용할 수 있는 인원(기본 좌석의 2/3).")
             head = "".join(f"<th>{stg.short_label(k)}</th>" for k in range(stg.n_days))
             body = []
             for rid in rooms:
@@ -334,12 +336,13 @@ with tab_rooms:
                             f"<b>{r.시작}–{r.종료}</b> {html.escape(r.과목)}{' ✔' if r.상태 == '확정' else ''}</div>")
                     cells.append(f"<td>{''.join(chips) or '<span class=rt-empty>–</span>'}</td>")
                 n_ex = int((exam_rt["강의실"] == rid).sum())
-                body.append(f"<tr><th class='rt-room'>{rid}<small>{rm_.capacity}석 · 시험 {n_ex}개</small></th>{''.join(cells)}</tr>")
+                body.append(f"<tr><th class='rt-room'>{rid}<small>좌석 {rm_.capacity} · 시험 좌석 {rm_.exam_capacity}</small>"
+                            f"<small>시험 {n_ex}개</small></th>{''.join(cells)}</tr>")
             st.markdown(
                 "<style>.rt-wrap{overflow-x:auto}.rt{border-collapse:separate;border-spacing:0;width:100%;font-size:.8rem}"
                 ".rt th,.rt td{border-bottom:1px solid #E4E8F1;padding:6px 8px;vertical-align:top;text-align:left}"
                 ".rt thead th{background:#FAFBFE;color:#6B7385;font-weight:700;position:sticky;top:0}"
-                ".rt-room{white-space:nowrap;font-weight:700}.rt-room small{display:block;color:#6B7385;font-weight:500}"
+                ".rt-room{white-space:nowrap;font-weight:700}.rt-room small{display:block;color:#6B7385;font-weight:500;font-size:.72rem}"
                 ".rt-chip{border-left:4px solid;background:#F6F8FC;border-radius:6px;padding:4px 6px;margin-bottom:4px;line-height:1.3}"
                 ".rt-chip.clash{background:#FDECEC}.rt-empty{color:#C3C8D4}</style>"
                 f"<div class='rt-wrap'><table class='rt'><thead><tr><th>강의실</th>{head}</tr></thead>"
@@ -347,14 +350,15 @@ with tab_rooms:
 
         with st.container(border=True):
             st.markdown("#### 강의실 시간표 자세히 보기")
-            sel = st.selectbox("강의실", rooms, format_func=lambda r: f"{r} ({ds.room_map[r].capacity}석) · 시험 "
+            sel = st.selectbox("강의실", rooms, format_func=lambda r: f"{r} (좌석 {ds.room_map[r].capacity} · 시험 좌석 "
+                               f"{ds.room_map[r].exam_capacity}) · 시험 "
                                f"{int((exam_rt['강의실'] == r).sum())}개")
             evs = []
             for r in rt[rt["강의실"] == sel].itertuples(index=False):
                 if r.종류 == "시험":
                     evs.append(dict(day=r.day_idx, start=r.start_min, end=r.end_min, cls="dept",
                                     color=DEPT_COLORS.get(r.학과, "#868E96"), title=r.과목 + (" ✔" if r.상태 == "확정" else ""),
-                                    sub=f"{r.시작}~{r.종료} · {r.교수} · {r.수강}명"))
+                                    sub=f"{r.시작}~{r.종료} · {r.교수} · {r.수강}명 / 시험 좌석 {r.시험좌석}"))
                 else:
                     evs.append(dict(day=r.day_idx, start=r.start_min, end=r.end_min, cls="mine", title=r.과목,
                                     sub=f"정규 수업 {r.시작}~{r.종료}"))

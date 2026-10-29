@@ -164,7 +164,9 @@ def validate(ds: Dataset, schedule: pd.DataFrame, settings: Settings,
             if r is None:
                 add("H3", f"{code}: 강의실 '{e.room}'이(가) 존재하지 않습니다.")
                 continue
-            if r.capacity < c.enrollment:
+            if c.exam_type == EXAM_SEPARATE and r.exam_capacity < c.enrollment:
+                add("H3", f"{code}: 강의실 {r.rid} 시험 좌석 {r.exam_capacity}석 < 수강인원 {c.enrollment}명.")
+            elif r.capacity < c.enrollment:
                 add("H3", f"{code}: 강의실 {r.rid} 수용인원 {r.capacity}석 < 수강인원 {c.enrollment}명.")
             if c.exam_type == EXAM_SEPARATE:
                 if not r.allows(c.dept):
@@ -245,7 +247,8 @@ def quality(ds: Dataset, schedule: pd.DataFrame, settings: Settings, requests, i
         pc = per_course[code]
         r = rm.get(e.room)
         pc["room_capacity"] = r.capacity if r else 0
-        pc["waste"] = (r.capacity - c.enrollment) if r else 0
+        pc["room_exam_capacity"] = r.exam_capacity if r else 0
+        pc["waste"] = (r.exam_capacity - c.enrollment) if r else 0
         prefs = preferences_for(ds, code, requests)
         pc["has_pref"] = bool(prefs)
         pc["pref_met"] = bool(prefs) and any(settings.inside(p, e.day, e.start, e.end) for p in prefs)
@@ -257,9 +260,9 @@ def quality(ds: Dataset, schedule: pd.DataFrame, settings: Settings, requests, i
         ds_["exams"] += 1
         if r:
             seats_used += c.enrollment
-            seats_alloc += r.capacity
-            ds_["waste"] += r.capacity - c.enrollment
-            ds_["seats"] += r.capacity
+            seats_alloc += r.exam_capacity
+            ds_["waste"] += r.exam_capacity - c.enrollment
+            ds_["seats"] += r.exam_capacity
         if prefs:
             pref_total += 1
             ds_["pref_total"] += 1

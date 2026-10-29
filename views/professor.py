@@ -1,9 +1,9 @@
 """교수 화면: 시험 가능 시간표 확인 → 추천 일정·이유·경고 → 자연어 수정 → 재배정 → 전/후 비교 → (우선순위 차례에) 확정."""
 from __future__ import annotations
 
+import dataclasses
 import html
 import json
-from datetime import datetime
 
 import pandas as pd
 import streamlit as st
@@ -26,7 +26,8 @@ from core.priority import dept_rank
 from core.settings import NOTIFY_INSTANT
 from core.timeutil import min_to_hm, windows_to_text
 from ui import state
-from ui.calendar import legend, week_grid
+from ui.board import exam_board
+from ui.calendar import legend
 from ui.style import badge, hero, metric_cards, reason_box, warn_box
 
 S = st.session_state
@@ -101,6 +102,32 @@ def reason_text(facts: dict) -> tuple[str, str]:
         return base, "템플릿(AI 실패)"
 
 
+def apply_request(code: str, req: CourseRequest, text: str, mode: str, targets: list[str] | None = None) -> bool:
+    """교수 요청을 반영해 다시 배정하고 변경 기록을 남긴다. 성공하면 True (실패 메시지는 S.move_error)."""
+    targets = targets or [code]
+    new_reqs = dict(S.requests)
+    time_part = CourseRequest(unavailable=req.unavailable, allowed=req.allowed, preferred=req.preferred, avoid=req.avoid)
+    for t in targets:
+        merged = new_reqs.get(t, CourseRequest()).merged_with(req if t == code else time_part)
+        merged.duration_minutes = None
+        new_reqs[t] = merged
+    new_ds = ds.with_course_update(code, exam_minutes=int(req.duration_minutes)) if req.duration_minutes else ds
+    before_sched, before_reqs, before_conf = S.schedule.copy(), dict(S.requests), dict(S.confirmed)
+    before_metrics = dict(rep.metrics) if rep else {}
+    with st.spinner("조건을 반영해 다시 배정하는 중… (다른 과목 일정은 최대한 유지)"):
+        res = state.run_schedule(previous=before_sched, focus=set(targets), dataset=new_ds, requests=new_reqs)
+    if not res.ok:
+        S.move_error = (res.status, res.messages)
+        return False
+    S.change_log.append(dict(
+        prof=pid, code=code, targets=targets, text=text, mode=mode, summary=req.summary,
+        before=before_sched, after=S.schedule.copy(), before_metrics=before_metrics,
+        after_metrics=dict(state.current_report().metrics), solve_time=res.solve_time,
+        time=state.now_text(), confirmed=before_conf, before_reqs=before_reqs, before_minutes=cm[code].exam_minutes))
+    S.pending.pop(code, None)
+    return True
+
+
 # ---------------------------------------------------------------------------
 # 내 시간표 + 시험 가능 시간 (수강생 전원의 시간표 대조)
 # ---------------------------------------------------------------------------
@@ -119,7 +146,12 @@ if exam_codes:
         basis = st.radio("기준", ["확정된 일정 기준", "현재 추천안 기준"], horizontal=True, key="avail_basis",
                          help="확정된 일정 기준: 상위 학과가 확정한 시험과 바뀌지 않는 수업(진행 수업·교양·수업시간 시험 회차)만 막고 봅니다. "
                               "현재 추천안 기준: 아직 확정 안 된 다른 과목의 추천 시간까지 막고 봅니다.")
-        smap = slot_map(ds, S.schedule, stg, S.requests, sel, fixed_only=basis == "확정된 일정 기준")
+        # 보드에서는 이 과목에 걸린 '이 시간에만 / 이 강의실만' 조건(직전 옮기기 결과)을 빼고 계산한다.
+        # 새로 옮기면 그 조건이 새 시간·강의실로 바뀌기 때문 (불가 시간·선호 등 다른 요청은 그대로 반영)
+        view_reqs = dict(S.requests)
+        if sel in view_reqs:
+            view_reqs[sel] = dataclasses.replace(view_reqs[sel], allowed=[], room_ids=[])
+        smap = slot_map(ds, S.schedule, stg, view_reqs, sel, fixed_only=basis == "확정된 일정 기준")
         bgs = []
         cell = 30 if csel.exam_type != EXAM_IN_CLASS else None
         for x in smap:
@@ -164,33 +196,59 @@ if exam_codes:
         ])
         st.markdown(legend([("background:#E3F6EE", "가능 (학생 부담 없음)"), ("background:#FFF1DC", "△ 가능 (하루 3과목·연속 시험 발생)"),
                             ("background:#FBE4E4", "N명 = 수강생 시간 겹침"), ("background:#F3F4F7", "교수·강의실 사정으로 불가"),
-                            ("background:#1C2E5A", "이 과목 현재 일정"), ("background:#E9ECF2;border:1px solid #D8DDE8", "내 수업")]),
+                            ("background:#1C2E5A", "이 과목 시험 (끌어서 옮기기)"),
+                            ("background:#E9ECF2;border:1px solid #D8DDE8", "내 수업 · 내 다른 시험")]),
                     unsafe_allow_html=True)
-        st.markdown(week_grid(stg, evs, bgs, px_per_min=1.05), unsafe_allow_html=True)
-        feas = [x for x in smap if x["status"] != "blocked"]
-        if sel in S.confirmed:
-            st.caption("확정된 시험입니다. 바꾸려면 아래 과목 카드에서 확정을 취소하세요.")
-        elif feas:
-            feas.sort(key=lambda x: (x["status"] != "ok", x["day"], x["start"]))
-            def feas_label(i: int) -> str:
-                x = feas[i]
-                burden = "부담 없음" if x["status"] == "ok" else f"하루 3과목 {x['overload']}명·연속 {x['consecutive']}명"
-                return (f"{stg.date_label(x['day'])} {min_to_hm(x['start'])}~{min_to_hm(x['end'])} · {burden}"
-                        f" · {x['room']}")
-
-            m1, m2 = st.columns([3, 1])
-            pick = m1.selectbox("이 시각으로 옮기기", range(len(feas)), label_visibility="collapsed", format_func=feas_label)
-            if m2.button("이 시각으로 옮기기", width="stretch", key=f"move_{sel}"):
-                x = feas[pick]
-                S.edit_code = sel
-                S.pending[sel] = dict(
-                    req=validate_request({"allowed": [{"day": stg.day_name(x["day"]), "start": min_to_hm(x["start"]),
-                                                       "end": min_to_hm(x["end"])}],
-                                          "summary": f"{stg.date_label(x['day'])} {min_to_hm(x['start'])} 시작으로 이동"},
-                                         source="시간표에서 선택"),
-                    mode="시간표에서 선택", note=None, text=f"{stg.date_label(x['day'])} {min_to_hm(x['start'])}로 옮기기",
-                    all=False)
-                st.rerun()
+        row_sel = state.exam_row(sel)
+        movable = sel not in S.confirmed
+        locked_reason = "확정된 시험이라 옮길 수 없습니다. 바꾸려면 아래 과목 카드에서 확정을 취소하세요." if not movable else ""
+        cells, slots = [], {}
+        for b, x in zip(bgs, smap):
+            sid = f"{x['day']}-{x['start']}" if x["status"] != "blocked" else None
+            cells.append(dict(b, slot=sid))
+            if sid:
+                info = ("수강생 전원 충돌 없음 · 하루 3과목·연속 시험 0명" if x["status"] == "ok"
+                        else f"가능 · 하루 3과목 이상 {x['overload']}명 · 연속 시험 {x['consecutive']}명")
+                slots[sid] = dict(day=x["day"], start=x["start"], end=x["end"], info=info,
+                                  when=f"{stg.date_label(x['day'])} {min_to_hm(x['start'])}~{min_to_hm(x['end'])}",
+                                  rooms=x["rooms"])
+        cur_sid = f"{int(row_sel.day)}-{int(row_sel.start)}" if row_sel is not None else None
+        st_min = min([stg.day_start] + [e["start"] for e in evs])
+        en_min = max([stg.day_end] + [e["end"] for e in evs])
+        board_data = dict(
+            days=[dict(label=stg.day_name(k), sub=stg.short_label(k).split("(")[0]) for k in range(stg.n_days)],
+            start=st_min, end=en_min, ppm=1.05,
+            ticks=[dict(m=m, label=min_to_hm(m)) for m in range((st_min // 60 + (st_min % 60 > 0)) * 60, en_min + 1, 60)],
+            cells=cells, slots=slots,
+            events=[dict(day=e["day"], start=e["start"], end=e["end"], title=e["title"], sub=e["sub"],
+                         cls="other" if e.get("cls") == "dept" else "") for e in evs if e.get("cls") != "current"],
+            exam=dict(day=int(row_sel.day), start=int(row_sel.start), end=int(row_sel.end), room=str(row_sel.room_id),
+                      slot=cur_sid, title=f"{csel.name} 시험" + (" ✔" if sel in S.confirmed else ""),
+                      sub=f"{min_to_hm(row_sel.start)}~{min_to_hm(row_sel.end)} · {row_sel.room_id}"
+                          f" (시험 좌석 {ds.room_map[row_sel.room_id].exam_capacity}석)") if row_sel is not None else None,
+            enrollment=csel.enrollment, movable=movable and row_sel is not None,
+            room_fixed=csel.exam_type == EXAM_IN_CLASS, locked_reason=locked_reason,
+        )
+        if row_sel is not None:
+            mv = exam_board(board_data, key=f"board_{sel}_{basis}")
+            if mv:
+                d, s0 = int(mv["day"]), int(mv["start"])
+                e0 = s0 + (csel.in_class_exam_minutes if csel.exam_type == EXAM_IN_CLASS else csel.exam_minutes)
+                spec = {"allowed": [{"day": stg.day_name(d), "start": min_to_hm(s0), "end": min_to_hm(e0)}],
+                        "summary": f"{stg.date_label(d)} {min_to_hm(s0)} 시작" + (
+                            "" if csel.exam_type == EXAM_IN_CLASS else f" · {mv['room']}")}
+                if csel.exam_type != EXAM_IN_CLASS:
+                    spec["room"] = {"min_capacity": None, "building": None, "room_ids": [str(mv["room"])]}
+                req = validate_request(spec, source="시간표에서 옮기기")
+                ok = apply_request(sel, req, text=f"시간표에서 {req.summary}(으)로 옮기기", mode="드래그 앤 드롭")
+                if ok:
+                    st.toast(f"{csel.name} 시험을 {req.summary}(으)로 옮겼습니다.", icon="✅")
+                    st.rerun()
+        err = S.pop("move_error", None)
+        if err:
+            st.error(f"**옮기지 못했습니다 — {err[0]}**. 기존 일정은 그대로 유지됩니다.")
+            for m in err[1]:
+                st.markdown(f"- {m}")
 else:
     st.info("시험이 있는 담당 과목이 없습니다.")
 
@@ -354,38 +412,13 @@ else:
                 st.rerun()
             if go_btn:
                 targets = [code] + ([x for x in editable if x != code] if pend.get("all") else [])
-                new_reqs = dict(S.requests)
-                new_ds = ds
-                time_part = CourseRequest(unavailable=req.unavailable, allowed=req.allowed, preferred=req.preferred,
-                                          avoid=req.avoid)
-                for t in targets:
-                    part = req if t == code else time_part
-                    old = new_reqs.get(t, CourseRequest())
-                    merged = old.merged_with(part)
-                    merged.duration_minutes = None
-                    new_reqs[t] = merged
-                if req.duration_minutes:
-                    new_ds = ds.with_course_update(code, exam_minutes=int(req.duration_minutes))
-                before_sched = S.schedule.copy()
-                before_metrics = dict(rep.metrics) if rep else {}
-                before_conf = dict(S.confirmed)
-                before_reqs = dict(S.requests)
-                with st.spinner("조건을 반영해 다시 배정하는 중… (다른 과목 일정은 최대한 유지)"):
-                    res = state.run_schedule(previous=before_sched, focus=set(targets), dataset=new_ds, requests=new_reqs)
-                if res.ok:
-                    after = state.current_report()
-                    S.change_log.append(dict(
-                        prof=pid, code=code, targets=targets, text=pend["text"], mode=pend["mode"],
-                        summary=req.summary, before=before_sched, after=S.schedule.copy(),
-                        before_metrics=before_metrics, after_metrics=dict(after.metrics), solve_time=res.solve_time,
-                        time=datetime.now().strftime("%H:%M:%S"), confirmed=before_conf, before_reqs=before_reqs,
-                        before_minutes=c.exam_minutes))
-                    S.pending.pop(code, None)
-                    st.toast(f"재배정 완료 · {res.solve_time:.1f}초", icon="✅")
+                if apply_request(code, req, text=pend["text"], mode=pend["mode"], targets=targets):
+                    st.toast("재배정 완료", icon="✅")
                     st.rerun()
-                else:
-                    st.error(f"**재배정 실패 — {res.status}**. 기존 일정은 그대로 유지됩니다.")
-                    for m in res.messages:
+                err = S.pop("move_error", None)
+                if err:
+                    st.error(f"**재배정 실패 — {err[0]}**. 기존 일정은 그대로 유지됩니다.")
+                    for m in err[1]:
                         st.markdown(f"- {m}")
 
 # ---------------------------------------------------------------------------

@@ -51,6 +51,8 @@ SLOT_MINUTES = 30            # 시작 시각 단위
 CONSECUTIVE_GAP_MIN = 30     # 이 값 미만 간격이면 '연속 시험'
 MAX_EXAMS_PER_DAY = 2        # 학생 1명당 하루 최대 시험 수 (되도록)
 DEFAULT_TIME_LIMIT_SEC = 20
+# 시험 좌석: 시험은 한 칸씩 띄어 앉으므로 좌석 수보다 적게 들어간다 (rooms.csv 의 exam_capacity 를 비우면 이 비율)
+EXAM_SEAT_RATIO = 2 / 3
 STALL_SEC = 6               # 더 좋은 해가 이 시간 동안 안 나오면 탐색 종료
 
 # ---- 최적화 벌점 가중치 (되도록 지킬 조건) ----

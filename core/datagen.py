@@ -25,7 +25,7 @@ from .config import (
     GENERAL_DEPT,
     MAX_COURSE_ENROLLMENT,
 )
-from .dataset import Dataset
+from .dataset import Dataset, exam_seats
 from .timeutil import min_to_hm
 
 # (코드, 과목명, 학과, 대상학년)
@@ -336,7 +336,7 @@ def generate(cfg: GenConfig | None = None) -> Dataset:
         cap = next(x for x in (40, 60, 80, 120, 150, 200, 300) if x >= count[g["code"]])
         no = f"{(j // 6) + 1}{(j % 6) + 1:02d}"
         rooms.append(dict(room_id=f"교양관-{no}", building="교양관", room_no=no, capacity=cap,
-                          departments=GENERAL_DEPT))
+                          departments=GENERAL_DEPT, exam_capacity=exam_seats(cap)))
         g["room"] = f"교양관-{no}"
 
     # ---- 5. 시험 방식 · 시험 시간 ----
@@ -413,8 +413,8 @@ def generate(cfg: GenConfig | None = None) -> Dataset:
 
 def _make_rooms(cfg: GenConfig, rng: random.Random) -> list[dict]:
     n = cfg.n_rooms
-    # 수용인원 분포 (기본 42실: 30석 8, 50석 12, 80석 10, 120석 7, 200석 5)
-    base = [30] * 8 + [50] * 12 + [80] * 10 + [120] * 7 + [200] * 5
+    # 수용인원 분포 (기본 42실: 30석 8, 50석 12, 80석 9, 120석 6, 200석 5, 300석 대강의실 2)
+    base = [30] * 8 + [50] * 12 + [80] * 9 + [120] * 6 + [200] * 5 + [300] * 2
     caps = [base[int(i * len(base) / n)] for i in range(n)]
     big = [c for c in caps if c >= 120]
     small = [c for c in caps if c < 120]
@@ -436,7 +436,8 @@ def _make_rooms(cfg: GenConfig, rng: random.Random) -> list[dict]:
         j = counter[bld]
         counter[bld] += 1
         no = f"{(j // 6) + 1}{(j % 6) + 1:02d}"
-        rooms.append(dict(room_id=f"{bld}-{no}", building=bld, room_no=no, capacity=cap, departments=deps))
+        rooms.append(dict(room_id=f"{bld}-{no}", building=bld, room_no=no, capacity=cap, departments=deps,
+                          exam_capacity=exam_seats(cap)))
 
     # 대형 강의실(120석 이상)은 공동강의동(전체 공용)
     for c in sorted(big, reverse=True):

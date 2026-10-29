@@ -152,7 +152,7 @@ class _Builder:
         req = self.req.get(c.code) if self.f.use_requests else None
         out = []
         for r in self.ds.room_map.values():
-            if r.capacity < c.enrollment or not r.allows(c.dept):
+            if r.exam_capacity < c.enrollment or not r.allows(c.dept):   # 시험 좌석 기준
                 continue
             if req:
                 if req.min_capacity and r.capacity < req.min_capacity:
@@ -196,8 +196,8 @@ class _Builder:
                 self.ok_build = False
                 req = self.req.get(c.code)
                 extra = f" (추가 조건: {', '.join(req.describe())})" if req and not req.is_empty() else ""
-                self.diag.append(f"**{c.code} {c.name}**: 수강인원 {c.enrollment}명을 수용하면서 {c.dept}가 쓸 수 있는 "
-                                 f"강의실이 없습니다{extra}.")
+                self.diag.append(f"**{c.code} {c.name}**: 수강인원 {c.enrollment}명을 시험 좌석(띄어 앉기) 기준으로 수용하면서 "
+                                 f"{c.dept}가 쓸 수 있는 강의실이 없습니다{extra}.")
                 continue
             xs = {(d, t): m.NewBoolVar(f"x_{c.code}_{d}_{t}") for (d, t) in times}
             m.AddExactlyOne(xs.values())
@@ -319,7 +319,7 @@ class _Builder:
                     continue
                 c = cm[code]
                 for r, yv in self.y[code].items():
-                    waste = rm[r].capacity - c.enrollment
+                    waste = rm[r].exam_capacity - c.enrollment
                     if waste > 0:
                         obj.append(W_ROOM_WASTE * w[code] * ((waste + 5) // 10) * yv)
 
