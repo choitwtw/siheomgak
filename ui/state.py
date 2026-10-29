@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -19,8 +20,9 @@ import streamlit as st
 from core.baseline import baseline_metrics
 from core.config import EXAM_IN_CLASS, EXAM_SEPARATE, GENERAL_DEPT
 from core.constraints import CourseRequest
+from core.csvio import CheckResult, assemble, parse_table
 from core.datagen import GenConfig, generate
-from core.dataset import Dataset
+from core.dataset import SCHEMAS, TABLE_LABELS, Dataset
 from core.priority import dept_rank, priority_order
 from core.scheduler import Assignment, SolveResult, solve
 from core.settings import NOTIFY_INSTANT, Settings
@@ -35,7 +37,7 @@ def now_text() -> str:
     return datetime.now(KST).strftime("%m/%d %H:%M")
 
 
-STATE_VERSION = 3   # 세션 상태 구조가 바뀌면 올린다
+STATE_VERSION = 4   # 세션 상태 구조가 바뀌면 올린다
 
 
 def init_state():
@@ -43,11 +45,49 @@ def init_state():
     if ("ds" in S and S.get("state_version") == STATE_VERSION
             and isinstance(S.get("settings"), Settings) and isinstance(S.get("ds"), Dataset)):
         return
-    S.ds = generate(GenConfig())
+    S.ds, S.data_load_msgs = load_default_dataset()
     S.gen_cfg = GenConfig()
     S.settings = Settings()
     S.state_version = STATE_VERSION
     _reset_work()
+
+
+CUSTOM_DIR = Path(__file__).resolve().parent.parent / "data" / "custom"
+
+
+@st.cache_resource(show_spinner=False)
+def _load_custom(signature: tuple):
+    """data/custom 폴더의 CSV(있는 것만)를 가상 데이터 위에 덮어써서 기본 데이터로 만든다."""
+    base = generate(GenConfig())
+    tables = dict(base.tables())
+    res = CheckResult()
+    used = []
+    for t in SCHEMAS:
+        f = CUSTOM_DIR / f"{t}.csv"
+        if f.exists():
+            df, r = parse_table(t, f.read_bytes())
+            res.extend(r)
+            if df is not None:
+                tables[t] = df
+                used.append(TABLE_LABELS[t])
+    if not used or not res.ok:
+        return None, res, used
+    ds, r2 = assemble(tables, source="사용자 데이터 (" + ", ".join(used) + ")")
+    res.extend(r2)
+    return ds, res, used
+
+
+def load_default_dataset():
+    """기본 데이터: data/custom 에 CSV 가 있으면 그것, 없으면 시드 고정 가상 데이터.
+    사용자 데이터에 오류가 있으면 앱이 멈추지 않도록 가상 데이터로 시작하고 오류를 관리자 화면에 보여 준다."""
+    files = sorted(CUSTOM_DIR.glob("*.csv")) if CUSTOM_DIR.exists() else []
+    if not files:
+        return generate(GenConfig()), None
+    sig = tuple((f.name, f.stat().st_size, f.stat().st_mtime) for f in files)
+    ds, res, used = _load_custom(sig)
+    if ds is None:
+        return generate(GenConfig()), ("error", res.errors[:20])
+    return ds, ("ok", res.warnings[:20])
 
 
 def _reset_work():

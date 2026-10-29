@@ -381,6 +381,15 @@ with tab_rooms:
 # 데이터 준비
 # ---------------------------------------------------------------------------
 with tab_data:
+    msgs = S.get("data_load_msgs")
+    if msgs and msgs[0] == "error":
+        st.error("data/custom 폴더의 사용자 데이터에 오류가 있어 가상 데이터로 시작했습니다. 아래 내용을 고쳐 주세요.")
+        for e in msgs[1]:
+            st.markdown(f"- {e}")
+    elif msgs and msgs[1]:
+        with st.expander(f"사용자 데이터 확인 메시지 {len(msgs[1])}건"):
+            for w in msgs[1]:
+                st.markdown(f"- {w}")
     summ = ds.summary()
     metric_cards([dict(label=k, value=v, tone="info") for k, v in list(summ.items())[:5]])
     st.caption(f"현재 데이터: {ds.meta.get('source')}" + (f" (시드 {ds.meta['seed']})" if "seed" in ds.meta else "")

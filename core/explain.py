@@ -280,3 +280,27 @@ def llm_impact(imp: dict) -> str:
     clean = dict(imp, alternatives=[{k: v for k, v in a.items() if not k.startswith("_")} for a in imp["alternatives"]])
     return llm.call_text(llm.load_prompt("impact_analysis"),
                          "다음 변경 영향을 설명해 주세요.\n" + json.dumps(clean, ensure_ascii=False, indent=1))
+
+
+def busy_map(ds: Dataset, schedule: pd.DataFrame, settings: Settings,
+             requests: dict[str, CourseRequest], code: str, cell: int = SLOT_MINUTES) -> list[dict]:
+    """시험 기간을 cell 분 단위 칸으로 나눠, 칸마다 이 과목 수강생 중 바쁜 학생 수와 교수 사정을 센다.
+    (다른 과목의 배정된 시험·진행 중인 수업·교양 수업이 모두 '바쁨'이다. 이 과목 자신의 시험은 제외)"""
+    c = ds.course_map[code]
+    others = schedule[schedule.course_code != code]
+    items = week_items(ds, others, settings)
+    req = requests.get(code)
+    prof = ds.prof_map.get(c.prof)
+    stu_items = {sid: [i for oc in ds.courses_of[sid] if oc != code for i in items.get(oc, [])]
+                 for sid in ds.students_of.get(code, [])}
+    prof_items = [i for oc in ds.prof_courses.get(c.prof, []) if oc != code for i in items.get(oc, [])]
+    out = []
+    for d in range(settings.n_days):
+        for m in range(settings.day_start, settings.day_end, cell):
+            e = m + cell
+            unavail = bool((c.exam_type == EXAM_SEPARATE and prof and any(settings.hits(w, d, m, e) for w in prof.unavailable))
+                           or (req and any(settings.hits(w, d, m, e) for w in req.unavailable)))
+            prof_busy = any(_ov(d, m, e, i.day, i.start, i.end) for i in prof_items)
+            busy = sum(1 for its in stu_items.values() if any(_ov(d, m, e, i.day, i.start, i.end) for i in its))
+            out.append(dict(day=d, start=m, end=e, busy=busy, unavail=unavail, prof_busy=prof_busy))
+    return out

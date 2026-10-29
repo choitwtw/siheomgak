@@ -17,6 +17,7 @@ from core.explain import (
     impact_facts,
     llm_impact,
     llm_reason,
+    busy_map,
     slot_map,
     template_impact,
     template_reason,
@@ -141,77 +142,72 @@ if exam_codes:
         sel = sel or exam_codes[0]
         S.avail_code = sel
         csel = cm[sel]
-        st.caption(f"{csel.name} 수강생 {csel.enrollment}명의 시험 기간 시간표(진행 중인 수업, 교양 수업, 다른 시험)와 "
-                   "교수님 일정·강의실을 대조해, 시험을 **시작할 수 있는 시각**을 칸마다 표시했습니다. 칸에 마우스를 올리면 자세히 보입니다.")
-        basis = st.radio("기준", ["확정된 일정 기준", "현재 추천안 기준"], horizontal=True, key="avail_basis",
-                         help="확정된 일정 기준: 상위 학과가 확정한 시험과 바뀌지 않는 수업(진행 수업·교양·수업시간 시험 회차)만 막고 봅니다. "
-                              "현재 추천안 기준: 아직 확정 안 된 다른 과목의 추천 시간까지 막고 봅니다.")
+        st.caption(f"{csel.name} 수강생 {csel.enrollment}명 각자의 시험 기간 시간표를 대조했습니다. 다른 과목에 이미 잡힌 시험, "
+                   "진행 중인 수업, 교양 수업이 있는 시간은 그 학생에게 막힌 시간입니다. 칸의 숫자는 그 30분에 막힌 학생 수입니다.")
         # 보드에서는 이 과목에 걸린 '이 시간에만 / 이 강의실만' 조건(직전 옮기기 결과)을 빼고 계산한다.
         # 새로 옮기면 그 조건이 새 시간·강의실로 바뀌기 때문 (불가 시간·선호 등 다른 요청은 그대로 반영)
         view_reqs = dict(S.requests)
         if sel in view_reqs:
             view_reqs[sel] = dataclasses.replace(view_reqs[sel], allowed=[], room_ids=[])
-        smap = slot_map(ds, S.schedule, stg, view_reqs, sel, fixed_only=basis == "확정된 일정 기준")
-        bgs = []
-        cell = 30 if csel.exam_type != EXAM_IN_CLASS else None
-        for x in smap:
-            when = f"{stg.date_label(x['day'])} {min_to_hm(x['start'])} 시작"
-            end = x["start"] + cell if cell else x["end"]
-            if x["status"] == "ok":
-                bgs.append(dict(day=x["day"], start=x["start"], end=end, cls="ok", label="가능",
-                                tip=f"{when} — 가능 · 수강생 전원 충돌 없음 · 하루 3과목·연속 시험 0명 · {x['room']}"))
-            elif x["status"] == "burden":
-                bgs.append(dict(day=x["day"], start=x["start"], end=end, cls="burden", label="△",
-                                tip=f"{when} — 가능하지만 하루 3과목 이상 {x['overload']}명 · 연속 시험 {x['consecutive']}명 · {x['room']}"))
+        # 다른 과목에 배정된 시험은 확정 여부와 관계없이 모두 막힌 시간으로 본다
+        smap = slot_map(ds, S.schedule, stg, view_reqs, sel)
+        bmap = busy_map(ds, S.schedule, stg, view_reqs, sel)
+        cells = []
+        for b in bmap:
+            when = f"{stg.date_label(b['day'])} {min_to_hm(b['start'])}~{min_to_hm(b['end'])}"
+            if b["unavail"]:
+                cells.append(dict(b, cls="prof", label="교수 불가", tip=f"{when} — 교수 불가 시간"))
+            elif b["prof_busy"]:
+                cells.append(dict(b, cls="prof", label="내 일정", tip=f"{when} — 교수님의 다른 수업·시험"))
+            elif b["busy"]:
+                cells.append(dict(b, cls="busy", label=f"{b['busy']}명",
+                                  tip=f"{when} — 수강생 {b['busy']}명이 다른 시험·수업 중 (이 시간에 시험 불가)"))
             else:
-                n = x.get("conflicts", 0)
-                heavy = n and n >= max(3, csel.enrollment * 0.1)
-                short = f"{n}명" if n else {"교수 불가 시간": "불가", "교수 요청 불가 시간": "요청",
-                                            "'이 시간에만' 요청 밖": "–", "교수 본인의 다른 수업·시험": "내일정",
-                                            "빈 강의실 없음": "실 없음"}.get(x["reason"], "×")
-                bgs.append(dict(day=x["day"], start=x["start"], end=end, cls="heavy" if heavy else "blocked",
-                                label=short, tip=f"{when} — 불가: {x['reason']}"))
+                cells.append(dict(b, cls="free", label="", tip=f"{when} — 수강생 전원·교수님 모두 비어 있음"))
         evs = []
         for oc in my_codes:
             o = cm[oc]
             if o.exam_type == EXAM_NONE:
                 for d, s0, e0 in stg.class_blocks(o):
-                    evs.append(dict(day=d, start=s0, end=e0, cls="mine", title=o.name, sub="내 정규 수업(진행)"))
+                    evs.append(dict(day=d, start=s0, end=e0, cls="", title=o.name, sub="내 정규 수업(진행)"))
             r0 = state.exam_row(oc)
-            if r0 is not None:
+            if r0 is not None and oc != sel:
                 conf = oc in S.confirmed
-                evs.append(dict(day=int(r0.day), start=int(r0.start), end=int(r0.end),
-                                cls="current" if oc == sel else "dept", color=None if oc == sel else "#5C6B8A",
+                evs.append(dict(day=int(r0.day), start=int(r0.start), end=int(r0.end), cls="other",
                                 title=f"{o.name} 시험" + (" ✔" if conf else ""),
                                 sub=f"{'확정' if conf else '현재 추천'} · {min_to_hm(r0.start)}~{min_to_hm(r0.end)} · {r0.room_id}"))
         n_ok = sum(x["status"] == "ok" for x in smap)
         n_bur = sum(x["status"] == "burden" for x in smap)
-        n_stu = sum(bool(x.get("conflicts")) for x in smap)
+        n_free = sum(c_["cls"] == "free" for c_ in cells)
         metric_cards([
-            dict(label="시작 가능한 시각", value=n_ok + n_bur, unit="개", tone="ok",
-                 sub=f"부담 없음 {n_ok} · 학생 부담 있음 {n_bur}"),
-            dict(label="수강생 시간이 겹치는 시각", value=n_stu, unit="개", tone="info", sub="칸의 숫자 = 겹치는 학생 수"),
+            dict(label="시험을 시작할 수 있는 시각", value=n_ok + n_bur, unit="개", tone="ok",
+                 sub=f"학생 부담 없음 {n_ok} · 하루 3과목·연속 시험 발생 {n_bur}"),
+            dict(label="수강생 전원이 비어 있는 시간", value=n_free * 30 // 60, unit="시간", tone="info",
+                 sub=f"30분 칸 {n_free}개 (초록)"),
             dict(label="시험 시간", value=csel.in_class_exam_minutes if csel.exam_type == EXAM_IN_CLASS else csel.exam_minutes,
                  unit="분", tone="info", sub=EXAM_TYPE_LABEL[csel.exam_type]),
         ])
-        st.markdown(legend([("background:#E3F6EE", "가능 (학생 부담 없음)"), ("background:#FFF1DC", "△ 가능 (하루 3과목·연속 시험 발생)"),
-                            ("background:#FBE4E4", "N명 = 수강생 시간 겹침"), ("background:#F3F4F7", "교수·강의실 사정으로 불가"),
-                            ("background:#1C2E5A", "이 과목 시험 (끌어서 옮기기)"),
-                            ("background:#E9ECF2;border:1px solid #D8DDE8", "내 수업 · 내 다른 시험")]),
+        st.markdown(legend([("background:#E3F6EE", "수강생·교수 모두 비어 있음"), ("background:#FBE4E4", "N명 = 그 30분에 다른 시험·수업이 있는 학생 수"),
+                            ("background:#F3F4F7", "교수 불가·내 일정"), ("background:#1C2E5A", "이 과목 시험 (끌어서 옮기기)"),
+                            ("background:#5C6B8A", "내 다른 과목 시험"), ("border:2.5px solid #0CA678", "끌 때: 놓을 수 있음"),
+                            ("border:2.5px solid #E03131", "끌 때: 불가")]),
                     unsafe_allow_html=True)
         row_sel = state.exam_row(sel)
         movable = sel not in S.confirmed
         locked_reason = "확정된 시험이라 옮길 수 없습니다. 바꾸려면 아래 과목 카드에서 확정을 취소하세요." if not movable else ""
-        cells, slots = [], {}
-        for b, x in zip(bgs, smap):
-            sid = f"{x['day']}-{x['start']}" if x["status"] != "blocked" else None
-            cells.append(dict(b, slot=sid))
-            if sid:
-                info = ("수강생 전원 충돌 없음 · 하루 3과목·연속 시험 0명" if x["status"] == "ok"
-                        else f"가능 · 하루 3과목 이상 {x['overload']}명 · 연속 시험 {x['consecutive']}명")
-                slots[sid] = dict(day=x["day"], start=x["start"], end=x["end"], info=info,
-                                  when=f"{stg.date_label(x['day'])} {min_to_hm(x['start'])}~{min_to_hm(x['end'])}",
-                                  rooms=x["rooms"])
+        slots, blocked = {}, {}
+        for x in smap:
+            sid = f"{x['day']}-{x['start']}"
+            if x["status"] == "blocked":
+                blocked[sid] = x["reason"]
+                continue
+            info = ("수강생 전원 충돌 없음 · 하루 3과목·연속 시험 0명" if x["status"] == "ok"
+                    else f"수강생 충돌 없음 · 다만 하루 3과목 이상 {x['overload']}명 · 연속 시험 {x['consecutive']}명")
+            slots[sid] = dict(day=x["day"], start=x["start"], end=x["end"], info=info,
+                              when=f"{stg.date_label(x['day'])} {min_to_hm(x['start'])}~{min_to_hm(x['end'])}",
+                              rooms=x["rooms"])
+        default_block = ("수업시간 시험은 정규 수업 회차 시작 시각에만 볼 수 있습니다" if csel.exam_type == EXAM_IN_CLASS
+                         else "시험이 하루 시험 시간 끝을 넘어갑니다")
         cur_sid = f"{int(row_sel.day)}-{int(row_sel.start)}" if row_sel is not None else None
         st_min = min([stg.day_start] + [e["start"] for e in evs])
         en_min = max([stg.day_end] + [e["end"] for e in evs])
@@ -219,9 +215,9 @@ if exam_codes:
             days=[dict(label=stg.day_name(k), sub=stg.short_label(k).split("(")[0]) for k in range(stg.n_days)],
             start=st_min, end=en_min, ppm=1.05,
             ticks=[dict(m=m, label=min_to_hm(m)) for m in range((st_min // 60 + (st_min % 60 > 0)) * 60, en_min + 1, 60)],
-            cells=cells, slots=slots,
-            events=[dict(day=e["day"], start=e["start"], end=e["end"], title=e["title"], sub=e["sub"],
-                         cls="other" if e.get("cls") == "dept" else "") for e in evs if e.get("cls") != "current"],
+            cells=cells, slots=slots, blocked=blocked, default_block=default_block,
+            events=[dict(day=e["day"], start=e["start"], end=e["end"], title=e["title"], sub=e["sub"], cls=e["cls"])
+                    for e in evs],
             exam=dict(day=int(row_sel.day), start=int(row_sel.start), end=int(row_sel.end), room=str(row_sel.room_id),
                       slot=cur_sid, title=f"{csel.name} 시험" + (" ✔" if sel in S.confirmed else ""),
                       sub=f"{min_to_hm(row_sel.start)}~{min_to_hm(row_sel.end)} · {row_sel.room_id}"
@@ -230,7 +226,7 @@ if exam_codes:
             room_fixed=csel.exam_type == EXAM_IN_CLASS, locked_reason=locked_reason,
         )
         if row_sel is not None:
-            mv = exam_board(board_data, key=f"board_{sel}_{basis}")
+            mv = exam_board(board_data, key=f"board_{sel}")
             if mv:
                 d, s0 = int(mv["day"]), int(mv["start"])
                 e0 = s0 + (csel.in_class_exam_minutes if csel.exam_type == EXAM_IN_CLASS else csel.exam_minutes)

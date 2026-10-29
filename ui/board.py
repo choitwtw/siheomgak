@@ -1,8 +1,9 @@
-"""교수용 시험 일정 보드 — 시험 블록을 끌어다 '가능' 칸에 놓고, 같은 위젯 안에서 강의실까지 고른다.
+"""교수용 시험 일정 보드 — 시험 블록을 끌어다 빈 시간에 놓고, 같은 위젯 안에서 강의실까지 고른다.
 
 Streamlit 커스텀 컴포넌트 v2(st.components.v2.component)로 만든 양방향 위젯.
-- 끌어다 놓기(드래그 앤 드롭) 또는 칸 클릭으로 시각 선택 → 아래 패널에서 빈 강의실 선택 → '옮기기'
-- 시각은 그대로 두고 강의실만 바꿀 수도 있다.
+- 배경 칸(30분) = 그 시간에 다른 시험·수업이 있는 이 과목 수강생 수 (0명이면 초록)
+- 시험 블록을 끌면 놓을 위치에 시험 시간 전체가 미리 보인다: 초록 = 놓을 수 있음, 빨강 = 불가(이유 표시)
+- 놓거나 칸을 클릭 → 아래 패널에서 빈 강의실 선택 → '옮기기'. 시각은 두고 강의실만 바꿀 수도 있다.
 - 결과는 trigger 값 'move' = {day, start, room} 으로 파이썬에 돌아온다.
 """
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import streamlit as st
 
 CSS = """
+.eb, .eb * { box-sizing: border-box; }
 .eb { font-family: inherit; color: #171C2B; }
 .eb-grid { display: grid; border: 1px solid #E4E8F1; border-radius: 16px; background: #fff; overflow: hidden; }
 .eb-hd { text-align: center; padding: 10px 0; font-weight: 700; font-size: .9rem; border-bottom: 1px solid #E4E8F1; background: #FAFBFE; }
@@ -18,28 +20,30 @@ CSS = """
 .eb-tick { position: absolute; right: 6px; font-size: .7rem; color: #6B7385; transform: translateY(-50%); }
 .eb-col { position: relative; border-left: 1px solid #E4E8F1; }
 .eb-line { position: absolute; left: 0; right: 0; border-top: 1px dashed #EEF0F5; }
-.eb-cell { position: absolute; left: 2px; right: 2px; border-radius: 6px; font-size: .66rem; display: flex;
+.eb-cell { position: absolute; left: 2px; right: 2px; border-radius: 5px; font-size: .66rem; display: flex;
            align-items: center; justify-content: center; user-select: none; }
-.eb-cell.ok { background: #E3F6EE; color: #087F5B; cursor: pointer; }
-.eb-cell.burden { background: #FFF1DC; color: #B35C00; cursor: pointer; }
-.eb-cell.blocked { background: #F3F4F7; color: #9AA1B2; }
-.eb-cell.heavy { background: #FBE4E4; color: #C92A2A; }
-.eb-cell.ok:hover, .eb-cell.burden:hover { outline: 2px solid #3B5BDB; }
-.eb.dragging .eb-cell.ok, .eb.dragging .eb-cell.burden { outline: 2px dashed #3B5BDB; }
-.eb-cell.over { outline: 3px solid #1C2E5A !important; background: #D3E4FF !important; color: #1C2E5A !important; }
-.eb-ev { position: absolute; left: 5px; right: 5px; border-radius: 10px; padding: 5px 7px; font-size: .74rem; line-height: 1.3;
+.eb-cell.free { background: #E3F6EE; color: #087F5B; }
+.eb-cell.busy { background: #FBE4E4; color: #C92A2A; }
+.eb-cell.prof { background: #F3F4F7; color: #9AA1B2; }
+.eb.movable .eb-cell { cursor: pointer; }
+.eb-ev { position: absolute; left: 5px; right: 5px; border-radius: 9px; padding: 4px 7px; font-size: .72rem; line-height: 1.25;
          overflow: hidden; z-index: 2; background: #E9ECF2; color: #3A4256; border: 1px solid #D8DDE8; pointer-events: none; }
-.eb-ev b { display: block; font-size: .78rem; }
+.eb-ev b { display: block; font-size: .76rem; }
 .eb-ev.other { background: #5C6B8A; color: #fff; border: none; }
-.eb-exam { position: absolute; left: 4px; right: 4px; border-radius: 10px; padding: 6px 8px; font-size: .76rem; line-height: 1.3;
-           overflow: hidden; z-index: 3; background: #1C2E5A; color: #fff; box-shadow: 0 6px 16px rgba(28,46,90,.28); }
-.eb-exam b { display: block; font-size: .82rem; }
+.eb-exam { position: absolute; left: 4px; right: 4px; border-radius: 9px; padding: 4px 8px; font-size: .74rem; line-height: 1.25;
+           overflow: hidden; z-index: 3; background: #1C2E5A; color: #fff; box-shadow: 0 4px 12px rgba(28,46,90,.28); }
+.eb-exam b { display: block; font-size: .8rem; }
 .eb-exam.movable { cursor: grab; }
 .eb-exam.movable:active { cursor: grabbing; }
 .eb-exam .grip { float: right; opacity: .8; }
-.eb-ghost { position: absolute; left: 4px; right: 4px; border-radius: 10px; z-index: 4; border: 2.5px dashed #3B5BDB;
-            background: rgba(59,91,219,.12); pointer-events: none; padding: 5px 7px; font-size: .74rem; color: #1C2E5A; font-weight: 700; }
+.eb.dragging .eb-exam { opacity: .45; }
+.eb-prev { position: absolute; left: 3px; right: 3px; border-radius: 9px; z-index: 4; pointer-events: none;
+           padding: 4px 7px; font-size: .72rem; font-weight: 700; line-height: 1.25; }
+.eb-prev.good { border: 2.5px solid #0CA678; background: rgba(12,166,120,.16); color: #087F5B; }
+.eb-prev.bad { border: 2.5px solid #E03131; background: rgba(224,49,49,.14); color: #C92A2A; }
+.eb-prev.pick { border: 2.5px dashed #3B5BDB; background: rgba(59,91,219,.12); color: #1C2E5A; }
 .eb-panel { margin-top: 12px; border: 1px solid #C5D0F5; background: #F6F8FF; border-radius: 14px; padding: 14px 16px; }
+.eb-panel.err { border-color: #F3B4B4; background: #FFF5F5; }
 .eb-panel h4 { margin: 0 0 4px 0; font-size: 1rem; }
 .eb-panel .muted { color: #6B7385; font-size: .82rem; margin-bottom: 10px; }
 .eb-rooms { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin: 8px 0 12px; }
@@ -65,15 +69,19 @@ export default function(component) {
   root.innerHTML = '';
   if (!data) { return; }
   const D = data;
+  root.classList.toggle('movable', !!D.movable);
   const ppm = D.ppm;
   const height = Math.round((D.end - D.start) * ppm) + 12;
   const y = (m) => Math.round((m - D.start) * ppm);
+  const h = (a, b) => Math.max(Math.round((b - a) * ppm), 18);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const X = D.exam;
+  const dur = X.end - X.start;
 
   const help = document.createElement('p');
   help.className = 'eb-help';
   help.innerHTML = D.movable
-    ? '<b>남색 시험 블록을 끌어서 초록(가능)·주황(△) 칸에 놓거나, 칸을 클릭하세요.</b> 아래에서 강의실을 고른 뒤 옮기기를 누르면 바로 다시 배정합니다.'
+    ? '<b>남색 시험 블록을 끌어 옮기세요(칸을 클릭해도 됩니다).</b> 끄는 동안 시험 시간 전체가 초록이면 놓을 수 있고, 빨강이면 그 시간에 다른 시험·수업이 있는 학생이 있어 놓을 수 없습니다.'
     : esc(D.locked_reason || '이 시험은 옮길 수 없습니다.');
   root.appendChild(help);
 
@@ -98,11 +106,30 @@ export default function(component) {
   }
   root.appendChild(grid);
 
-  let selected = null;   // 고른 slot id
-  let room = null;       // 고른 강의실
+  // ---- 시작 시각 판정 ----
+  const sid = (day, start) => `${day}-${start}`;
+  function verdict(day, start) {
+    const id = sid(day, start);
+    if (D.slots[id]) return { ok: true, id };
+    return { ok: false, id, reason: D.blocked[id] || D.default_block };
+  }
 
-  // 배경 칸 (시작 가능 여부)
-  const cellEls = {};
+  // ---- 미리보기 상자 ----
+  const prev = document.createElement('div');
+  prev.className = 'eb-prev';
+  prev.style.display = 'none';
+  function showPreview(day, start, cls, text) {
+    if (prev.parentElement !== cols[day]) cols[day].appendChild(prev);
+    prev.className = 'eb-prev ' + cls;
+    prev.style.top = y(start) + 'px';
+    prev.style.height = h(start, start + dur) + 'px';
+    prev.textContent = text;
+    prev.style.display = 'block';
+  }
+  const hidePreview = () => { prev.style.display = 'none'; };
+  const hm = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+
+  // ---- 배경 칸: 30분마다 바쁜 학생 수 ----
   for (const c of D.cells) {
     const el = document.createElement('div');
     el.className = 'eb-cell ' + c.cls;
@@ -110,67 +137,85 @@ export default function(component) {
     el.style.height = Math.max(Math.round((c.end - c.start) * ppm) - 2, 6) + 'px';
     el.title = c.tip || '';
     el.textContent = c.label || '';
-    if (c.slot && D.movable) {
-      el.dataset.slot = c.slot;
-      cellEls[c.slot] = el;
-      el.addEventListener('click', () => choose(c.slot));
-      el.addEventListener('dragover', (ev) => { ev.preventDefault(); el.classList.add('over'); });
-      el.addEventListener('dragleave', () => el.classList.remove('over'));
-      el.addEventListener('drop', (ev) => { ev.preventDefault(); el.classList.remove('over'); root.classList.remove('dragging'); choose(c.slot); });
+    if (D.movable) {
+      const enter = (ev) => {
+        if (ev) ev.preventDefault();
+        const v = verdict(c.day, c.start);
+        const span = `${hm(c.start)}~${hm(c.start + dur)}`;
+        showPreview(c.day, c.start, v.ok ? 'good' : 'bad', v.ok ? `${span} 놓을 수 있음` : `${span} 불가 — ${v.reason}`);
+      };
+      el.addEventListener('dragover', enter);
+      el.addEventListener('dragenter', enter);
+      el.addEventListener('mouseenter', () => { if (!root.classList.contains('dragging')) enter(); });
+      el.addEventListener('mouseleave', () => { if (!root.classList.contains('dragging')) restorePick(); });
+      const pick = (ev) => {
+        if (ev) ev.preventDefault();
+        root.classList.remove('dragging');
+        const v = verdict(c.day, c.start);
+        if (v.ok) choose(v.id); else refuse(c.day, c.start, v.reason);
+      };
+      el.addEventListener('drop', pick);
+      el.addEventListener('click', pick);
     }
     cols[c.day].appendChild(el);
   }
-  // 고정 일정 (내 수업, 내 다른 시험)
+  // ---- 고정 일정 (내 수업, 내 다른 시험) ----
   for (const e of D.events) {
     const el = document.createElement('div');
     el.className = 'eb-ev ' + (e.cls || '');
     el.style.top = y(e.start) + 'px';
-    el.style.height = Math.max(Math.round((e.end - e.start) * ppm) - 3, 24) + 'px';
+    el.style.height = h(e.start, e.end) + 'px';
     el.innerHTML = `<b>${esc(e.title)}</b>${esc(e.sub)}`;
     cols[e.day].appendChild(el);
   }
-  // 이 과목 시험 블록 (끌 수 있음)
-  const X = D.exam;
+  // ---- 이 과목 시험 블록 ----
   const ex = document.createElement('div');
   ex.className = 'eb-exam' + (D.movable ? ' movable' : '');
   ex.style.top = y(X.start) + 'px';
-  ex.style.height = Math.max(Math.round((X.end - X.start) * ppm) - 3, 30) + 'px';
+  ex.style.height = h(X.start, X.end) + 'px';
   ex.innerHTML = `${D.movable ? '<span class="grip">⠿</span>' : ''}<b>${esc(X.title)}</b>${esc(X.sub)}`;
   if (D.movable) {
     ex.draggable = true;
     ex.addEventListener('dragstart', (ev) => {
       ev.dataTransfer.setData('text/plain', 'exam');
       ev.dataTransfer.effectAllowed = 'move';
-      root.classList.add('dragging');
+      setTimeout(() => root.classList.add('dragging'), 0);
     });
-    ex.addEventListener('dragend', () => root.classList.remove('dragging'));
+    ex.addEventListener('dragend', () => { root.classList.remove('dragging'); restorePick(); });
   }
   cols[X.day].appendChild(ex);
 
-  let ghost = null;
   const panel = document.createElement('div');
   panel.className = 'eb-panel';
   root.appendChild(panel);
+
+  let selected = null, room = null;
+
+  function restorePick() {
+    if (selected && selected !== X.slot) {
+      const s = D.slots[selected];
+      showPreview(s.day, s.start, 'pick', '여기로 옮기기');
+    } else { hidePreview(); }
+  }
+
+  function refuse(day, start, reason) {
+    panel.className = 'eb-panel err';
+    panel.innerHTML = `<h4>${esc(D.days[day].label)} ${esc(D.days[day].sub)} ${hm(start)}에는 시작할 수 없습니다</h4>
+      <div class="muted">${esc(reason)}</div><div class="eb-btns"><button class="eb-btn back">돌아가기</button></div>`;
+    panel.querySelector('.back').addEventListener('click', () => choose(selected || X.slot));
+  }
 
   function choose(slotId) {
     selected = slotId;
     const s = D.slots[slotId];
     const ids = s.rooms.map((r) => r.rid);
     room = ids.includes(X.room) ? X.room : (ids[0] || null);
-    if (ghost) ghost.remove();
-    if (slotId !== X.slot) {
-      ghost = document.createElement('div');
-      ghost.className = 'eb-ghost';
-      ghost.style.top = y(s.start) + 'px';
-      ghost.style.height = Math.max(Math.round((s.end - s.start) * ppm) - 3, 30) + 'px';
-      ghost.textContent = '여기로 옮기기';
-      cols[s.day].appendChild(ghost);
-    } else { ghost = null; }
+    restorePick();
     renderPanel();
   }
 
   function renderPanel() {
-    if (!D.movable) { panel.style.display = 'none'; return; }
+    panel.className = 'eb-panel';
     const s = D.slots[selected];
     const same = selected === X.slot;
     const title = same ? `현재 시간 그대로 · ${esc(s.when)}` : `${esc(s.when)}(으)로 옮기기`;
@@ -184,7 +229,7 @@ export default function(component) {
         }).join('') + `</div>`;
     const canGo = D.room_fixed ? !same : (room && (!same || room !== X.room));
     const label = same ? '강의실만 바꾸기' : '이 시간·강의실로 옮기기';
-    panel.innerHTML = `<h4>${title}</h4><div class="muted">${esc(s.info)}${D.room_fixed ? '' : ' · 지금 비어 있고 시험 좌석이 충분한 강의실만 보여 줍니다.'}</div>
+    panel.innerHTML = `<h4>${title}</h4><div class="muted">${esc(s.info)}${D.room_fixed ? '' : ' · 그 시간에 비어 있고 시험 좌석이 충분한 강의실만 보여 줍니다.'}</div>
       ${roomsHtml}
       <div class="eb-btns"><button class="eb-btn primary" ${canGo ? '' : 'disabled'}>${label}</button>
       ${same ? '' : '<button class="eb-btn cancel">취소</button>'}</div>`;

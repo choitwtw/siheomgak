@@ -93,3 +93,22 @@ def test_rooms_exam_capacity_csv(default_data):
     rooms.loc[1, "exam_capacity"] = str(int(rooms.loc[1, "capacity"]) + 10)
     df, res = parse_table("rooms", to_csv_bytes(rooms))
     assert df is None and "시험좌석" in res.errors[0]
+
+
+def test_custom_dataset_folder(tmp_path, monkeypatch, default_data):
+    """data/custom 에 넣은 CSV 가 기본 데이터가 되고, 오류가 있으면 가상 데이터로 시작한다"""
+    from ui import state
+    monkeypatch.setattr(state, "CUSTOM_DIR", tmp_path)
+    ds, msg = state.load_default_dataset()
+    assert msg is None and ds.meta["source"] == "가상 데이터"
+    st_ = default_data.students.head(120)
+    en = default_data.enrollments[default_data.enrollments.student_id.isin(st_.student_id)]
+    (tmp_path / "students.csv").write_bytes(to_csv_bytes(st_))
+    (tmp_path / "enrollments.csv").write_bytes(to_csv_bytes(en))
+    ds, msg = state.load_default_dataset()
+    assert msg[0] == "ok" and len(ds.students) == 120 and "사용자 데이터" in ds.meta["source"]
+    bad = st_.astype(str)
+    bad.loc[bad.index[0], "grade"] = "다섯"
+    (tmp_path / "students.csv").write_bytes(to_csv_bytes(bad))
+    ds, msg = state.load_default_dataset()
+    assert msg[0] == "error" and "학년" in msg[1][0] and ds.meta["source"] == "가상 데이터"
