@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from .config import DEPARTMENTS, GENERAL_DEPT
+from .config import DEPARTMENTS, EXAM_NONE, GENERAL_DEPT
 from .dataset import EXAM_TYPE_ALIASES, SCHEMAS, TABLE_LABELS, Dataset, columns
 from .timeutil import hm_to_min, parse_days, parse_windows
 
@@ -156,14 +156,19 @@ def parse_table(table: str, raw: bytes) -> tuple[pd.DataFrame | None, CheckResul
                     row_err(i, "수업종료가 수업시작보다 늦어야 합니다.")
             except ValueError as ex:
                 row_err(i, str(ex))
-            m = int(float(r["exam_minutes"]))
-            if m < 30 or m > 240 or m % 15:
-                row_err(i, f"시험시간은 30~240분, 15분 단위여야 합니다: {m}")
+            try:
+                m = int(float(r["exam_minutes"] or 0))
+            except ValueError:
+                m = -1
+            if et == EXAM_NONE and m == 0:
+                pass   # 시험 없음 과목은 시험시간을 쓰지 않으므로 0·빈칸 허용
+            elif m < 30 or m > 240 or m % 15:
+                row_err(i, f"시험시간은 30~240분, 15분 단위여야 합니다: {r['exam_minutes']}")
             grades = [g for g in r["target_grades"].replace(" ", "").split(",") if g]
             if not grades or any(g not in "1234" for g in grades):
                 row_err(i, f"대상학년은 1~4를 쉼표로 구분해 적어 주세요: '{r['target_grades']}'")
         if not res.errors:
-            df["exam_minutes"] = df["exam_minutes"].map(lambda v: int(float(v)))
+            df["exam_minutes"] = df["exam_minutes"].map(lambda v: int(float(v or 0)))
             df["enrollment"] = df["enrollment"].map(lambda v: int(float(v)) if v != "" else 0)
     elif table == "professors":
         _check_unique(df, "professor_id", "교수ID", res, label)

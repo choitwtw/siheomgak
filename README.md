@@ -60,7 +60,7 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 브라우저가 자동으로 열립니다 (안 열리면 `http://localhost:8501` 접속).
-처음 화면을 열면 가상 데이터로 자동 배정이 한 번 실행됩니다 (보통 10초 안팎, 최대 20초).
+처음 화면을 열면 기본 데이터로 자동 배정이 한 번 실행됩니다 (보통 수 초, 최대 20초). 기본 데이터는 `data/custom/`의 학과 제공 데이터(학생 500명·과목 48개·교수 30명·강의실 40개)이고, 이 폴더가 비어 있으면 시드 고정 가상 데이터를 씁니다.
 
 다음부터는 폴더로 이동한 뒤 `source .venv/bin/activate` → `streamlit run app.py` 두 줄이면 됩니다.
 

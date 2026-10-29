@@ -112,3 +112,31 @@ def test_custom_dataset_folder(tmp_path, monkeypatch, default_data):
     (tmp_path / "students.csv").write_bytes(to_csv_bytes(bad))
     ds, msg = state.load_default_dataset()
     assert msg[0] == "error" and "학년" in msg[1][0] and ds.meta["source"] == "가상 데이터"
+
+
+def test_no_exam_course_allows_zero_minutes(default_data):
+    """시험 없음 과목은 시험시간 0·빈칸을 받고, 시험이 있는 과목은 거절한다"""
+    co = default_data.courses.astype(str)
+    i_none = co.index[co.exam_type == "없음"][0]
+    co.loc[i_none, "exam_minutes"] = "0"
+    df, res = parse_table("courses", to_csv_bytes(co))
+    assert res.ok and int(df.loc[i_none, "exam_minutes"]) == 0
+    i_sep = co.index[co.exam_type == "별도"][0]
+    co.loc[i_sep, "exam_minutes"] = "0"
+    df, res = parse_table("courses", to_csv_bytes(co))
+    assert df is None and "시험시간" in res.errors[0]
+
+
+def test_bundled_custom_data_schedules_cleanly():
+    """저장소에 들어 있는 data/custom 데이터가 오류 없이 읽히고, 위반 0건으로 배정된다"""
+    from core.scheduler import solve
+    from core.settings import Settings
+    from core.validator import validate
+    from ui import state
+    if not list(state.CUSTOM_DIR.glob("*.csv")):
+        return
+    ds, msg = state.load_default_dataset()
+    assert msg[0] == "ok", msg
+    res = solve(ds, Settings())
+    assert res.ok
+    assert not validate(ds, res.schedule, Settings(), {}, {}).violations
