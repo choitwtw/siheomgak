@@ -15,6 +15,7 @@ from playwright.sync_api import sync_playwright
 
 URL = sys.argv[1] if len(sys.argv) > 1 else "https://siheomgak.streamlit.app/"
 READY = "학과 우선순위"            # 관리자 대시보드가 다 그려지면 보이는 문구
+BROKEN = "Importing a module script failed"   # 위젯 파일을 못 받으면 화면에 뜨는 오류
 WAKE = re.compile(r"back up|wake", re.I)   # 잠든 앱 화면의 'Yes, get this app back up!' 버튼
 ATTEMPTS = int(os.environ.get("KEEP_AWAKE_ATTEMPTS", 3))
 WAIT_SEC = int(os.environ.get("KEEP_AWAKE_WAIT", 240))
@@ -70,6 +71,18 @@ with sync_playwright() as p:
         if ok:
             break
         print(f"{attempt}회차: 앱이 아직 뜨지 않아 다시 시도합니다.")
+    if ok:   # 화면 부품(위젯) 파일까지 잘 받는지: 교수·학생 화면도 열어 본다
+        for sub in ("professor", "student"):
+            try:
+                page.goto(URL + sub, wait_until="domcontentloaded", timeout=120_000)
+                page.wait_for_timeout(25_000)
+                text += " " + page_text(page)
+            except Exception as e:
+                print(sub, "열기 실패", e)
+        broken = [b for b in bad if "/~/+/" in b and b.split()[0].startswith("5")]
+        if broken or BROKEN in text:
+            ok = False
+            print("화면 부품 오류:", text.count(BROKEN), "곳, 실패한 파일:", sorted(set(broken))[:15])
     if not ok:   # 무엇이 보였는지 남긴다 (Actions 실행 결과의 artifact)
         page.screenshot(path="keep_awake.png", full_page=True)
         print("프레임:", [f.url for f in page.frames])
