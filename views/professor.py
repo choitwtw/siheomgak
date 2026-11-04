@@ -14,7 +14,8 @@ import pandas as pd
 import streamlit as st
 
 from core import llm
-from core.config import DAYS, EXAM_DURATION_BUTTONS, EXAM_IN_CLASS, EXAM_NONE, EXAM_TYPE_LABEL, GENERAL_DEPT
+from core.config import (DAYS, EXAM_DURATION_BUTTONS, EXAM_IN_CLASS, EXAM_NONE, EXAM_SEPARATE, EXAM_TYPE_LABEL,
+                         GENERAL_DEPT)
 from core.constraints import CourseRequest, validate_request
 from core.explain import (
     busy_map,
@@ -143,8 +144,10 @@ def reason_text(facts: dict) -> tuple[str, str]:
         return base, "템플릿(AI 실패)"
 
 
-def apply_request(code: str, req: CourseRequest, text: str, mode: str, targets: list[str] | None = None) -> bool:
-    """교수 요청을 반영해 다시 배정하고 변경 기록을 남긴다. 성공하면 True (실패 메시지는 S.move_error)."""
+def apply_request(code: str, req: CourseRequest, text: str, mode: str, targets: list[str] | None = None,
+                  course_changes: dict | None = None) -> bool:
+    """교수 요청을 반영해 다시 배정하고 변경 기록을 남긴다. 성공하면 True (실패 메시지는 S.move_error).
+    course_changes: 과목 자체를 바꿀 때 (예: 수업시간 시험을 빈 시간으로 옮기며 '별도 시험'으로)."""
     targets = targets or [code]
     new_reqs = dict(S.requests)
     time_part = CourseRequest(unavailable=req.unavailable, allowed=req.allowed, preferred=req.preferred, avoid=req.avoid)
@@ -152,7 +155,10 @@ def apply_request(code: str, req: CourseRequest, text: str, mode: str, targets: 
         merged = new_reqs.get(t, CourseRequest()).merged_with(req if t == code else time_part)
         merged.duration_minutes = None
         new_reqs[t] = merged
-    new_ds = ds.with_course_update(code, exam_minutes=int(req.duration_minutes)) if req.duration_minutes else ds
+    changes = dict(course_changes or {})
+    if req.duration_minutes:
+        changes["exam_minutes"] = int(req.duration_minutes)
+    new_ds = ds.with_course_update(code, **changes) if changes else ds
     before_sched, before_reqs, before_conf = S.schedule.copy(), dict(S.requests), dict(S.confirmed)
     before_metrics = dict(rep.metrics) if rep else {}
     with st.spinner("조건을 반영해 다시 배정하는 중… (다른 과목 일정은 최대한 유지)"):
@@ -164,7 +170,8 @@ def apply_request(code: str, req: CourseRequest, text: str, mode: str, targets: 
         prof=pid, code=code, targets=targets, text=text, mode=mode, summary=req.summary,
         before=before_sched, after=S.schedule.copy(), before_metrics=before_metrics,
         after_metrics=dict(state.current_report().metrics), solve_time=res.solve_time,
-        time=state.now_text(), confirmed=before_conf, before_reqs=before_reqs, before_minutes=cm[code].exam_minutes))
+        time=state.now_text(), confirmed=before_conf, before_reqs=before_reqs, before_minutes=cm[code].exam_minutes,
+        before_course=dict(exam_type=cm[code].exam_type, exam_minutes=cm[code].exam_minutes)))
     S.pending.pop(code, None)
     return True
 
@@ -174,8 +181,10 @@ def undo(lg: dict):
     S.schedule = lg["before"]
     S.change_log = [x for x in S.change_log if x is not lg]
     S.requests = dict(lg["before_reqs"])
-    if lg.get("before_minutes") and S.ds.course_map[lg["code"]].exam_minutes != lg["before_minutes"]:
-        S.ds = S.ds.with_course_update(lg["code"], exam_minutes=int(lg["before_minutes"]))
+    before = lg.get("before_course") or ({"exam_minutes": int(lg["before_minutes"])} if lg.get("before_minutes") else {})
+    now = S.ds.course_map[lg["code"]]
+    if any(getattr(now, k) != v for k, v in before.items()):       # 시험 시간·시험 방식도 원래대로
+        S.ds = S.ds.with_course_update(lg["code"], **before)
     for t in lg["targets"]:
         S.pop(f"dur_{t}", None)          # 시험 시간 버튼도 저장된 값으로 되돌린다
     S.report = None
@@ -229,8 +238,9 @@ saved = csel.exam_minutes
 dkey = f"dur_{sel}"
 if csel.exam_type == EXAM_IN_CLASS:
     dur_new = saved
-    say(f"이 과목은 <b>수업시간 시험</b>이라 정규 수업 시간({minutes_text(csel.class_len)}) 동안 정규 강의실에서 봅니다. "
-        "시험 기간 중 어느 수업 날에 볼지만 ③에서 고르시면 됩니다.")
+    say(f"이 과목은 <b>수업시간 시험</b>이라 정규 수업 시간({minutes_text(exam_len(csel))}) 동안 정규 강의실에서 봅니다. "
+        "수업이 없는 다른 빈 시간에 보고 싶으시면 ③ 시간표에서 <b>초록색 칸</b>을 누르세요. "
+        "그 시간에 비어 있는 강의실을 고르면 <b>'별도 시험'</b>으로 바뀌고, 그다음부터는 시험 시간도 버튼으로 바꿀 수 있습니다.")
 else:
     opts = sorted(set(EXAM_DURATION_BUTTONS) | {saved})
     if S.get(dkey) not in opts:
@@ -255,7 +265,21 @@ here = None
 if row_sel is not None:
     here = next((x for x in smap if x["day"] == int(row_sel.day) and x["start"] == int(row_sel.start)), None)
 fits_here = here is not None and here["status"] != "blocked"
-n_start = sum(x["status"] != "blocked" for x in smap)
+
+# 수업시간 시험도 수업이 없는 빈 시간으로 옮길 수 있다: 그 경우 '별도 시험'으로 바뀐다.
+# 정규 수업 회차는 원래 강의실 그대로(수업시간 시험), 그 밖의 빈 시간은 별도 시험 기준(시험 좌석이 충분한 빈 강의실)으로 계산
+in_class = csel.exam_type == EXAM_IN_CLASS
+class_ok = set()
+board_map = smap
+if in_class:
+    class_ok = {(x["day"], x["start"]) for x in smap if x["status"] != "blocked"}
+    sep_ds = view_ds.with_course_update(sel, exam_type=EXAM_SEPARATE, exam_minutes=dur_len)
+    by_slot = {(x["day"], x["start"]): x for x in smap}
+    board_map = [dict(by_slot[(x["day"], x["start"])], kind="class") if (x["day"], x["start"]) in class_ok
+                 else dict(x, kind="separate") for x in slot_map(sep_ds, S.schedule, stg, view_reqs, sel)]
+    board_map += [dict(x, kind="class") for k, x in by_slot.items()
+                  if k in class_ok and not any((y["day"], y["start"]) == k for y in board_map)]
+n_start = sum(x["status"] != "blocked" for x in board_map)
 
 if csel.exam_type != EXAM_IN_CLASS:
     if not preview or row_sel is None:
@@ -338,18 +362,21 @@ st.markdown(legend([("background:#E3F6EE", "초록 = 수강생·교수 모두 �
 movable = not confirmed_sel
 locked_reason = "확정된 시험이라 옮길 수 없습니다. 바꾸려면 ④에서 확정을 취소하세요." if not movable else ""
 slots, blocked = {}, {}
-for x in smap:
+for x in board_map:
     sid = f"{x['day']}-{x['start']}"
     if x["status"] == "blocked":
         blocked[sid] = x["reason"]
         continue
     info = ("수강생 전원 충돌 없음 · 하루 3과목·연속 시험 0명" if x["status"] == "ok"
             else f"수강생 충돌 없음 · 다만 하루 3과목 이상 {x['overload']}명 · 연속 시험 {x['consecutive']}명")
+    if x.get("kind") == "class":
+        info += " · 정규 수업 시간이라 원래 강의실에서 그대로 봅니다(수업시간 시험)"
+    elif x.get("kind") == "separate":
+        info += " · 수업이 없는 시간이라 '별도 시험'으로 바뀌어 고른 강의실에서 봅니다"
     slots[sid] = dict(day=x["day"], start=x["start"], end=x["end"], info=info,
                       when=f"{stg.date_label(x['day'])} {min_to_hm(x['start'])}~{min_to_hm(x['end'])}",
                       rooms=x["rooms"])
-default_block = ("수업시간 시험은 정규 수업 회차 시작 시각에만 볼 수 있습니다" if csel.exam_type == EXAM_IN_CLASS
-                 else "시험이 하루 시험 시간 끝을 넘어갑니다")
+default_block = "시험이 하루 시험 시간이 끝나는 시각을 넘어갑니다"
 cur_sid = f"{int(row_sel.day)}-{int(row_sel.start)}" if row_sel is not None else None
 st_min = min([stg.day_start] + [e["start"] for e in evs])
 en_min = max([stg.day_end] + [e["end"] for e in evs])
@@ -368,22 +395,28 @@ if row_sel is not None:
                   sub=f"{min_to_hm(row_sel.start)}~{min_to_hm(ex_end)} · {row_sel.room_id}"
                       f" (시험 좌석 {ds.room_map[row_sel.room_id].exam_capacity}석)"),
         enrollment=csel.enrollment, movable=movable,
-        room_fixed=csel.exam_type == EXAM_IN_CLASS, locked_reason=locked_reason,
+        room_fixed=False, locked_reason=locked_reason,
     )
     # 시험 시간이 바뀌면 보드도 새로 그린다 (key 에 길이 포함)
     mv = exam_board(board_data, key=f"board_{sel}_{dur_len}")
     if mv:
         d, s0 = int(mv["day"]), int(mv["start"])
         e0 = s0 + dur_len
-        summary = f"{stg.date_label(d)} {min_to_hm(s0)} 시작" + ("" if csel.exam_type == EXAM_IN_CLASS else f" · {mv['room']}")
+        # 수업시간 시험을 정규 수업 회차가 아닌 시간(또는 다른 강의실)으로 옮기면 '별도 시험'으로 바꾼다
+        keep_class = in_class and (d, s0) in class_ok and str(mv["room"]) == csel.room
+        to_separate = in_class and not keep_class
+        summary = f"{stg.date_label(d)} {min_to_hm(s0)} 시작" + ("" if keep_class else f" · {mv['room']}")
+        if to_separate:
+            summary += " · 별도 시험으로 변경"
         spec = {"allowed": [{"day": stg.day_name(d), "start": min_to_hm(s0), "end": min_to_hm(e0)}], "summary": summary}
-        if csel.exam_type != EXAM_IN_CLASS:
+        if not keep_class:
             spec["room"] = {"min_capacity": None, "building": None, "room_ids": [str(mv["room"])]}
         if preview:
             spec["duration_minutes"] = dur_new
             spec["summary"] = f"시험 시간 {minutes_text(dur_new)} · {summary}"
         req = validate_request(spec, source="시간표에서 옮기기")
-        ok = apply_request(sel, req, text=f"시간표에서 {req.summary}(으)로 옮기기", mode="시간표에서 고르기")
+        ok = apply_request(sel, req, text=f"시간표에서 {req.summary}(으)로 옮기기", mode="시간표에서 고르기",
+                           course_changes={"exam_type": EXAM_SEPARATE, "exam_minutes": dur_len} if to_separate else None)
         if ok:
             st.toast(f"{csel.name} 시험을 {req.summary}(으)로 정했습니다.", icon="✅")
             st.rerun()
