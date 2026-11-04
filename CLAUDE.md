@@ -7,7 +7,7 @@
 
 ## 구조·명령
 - `app.py`(진입점) · `views/`(관리자·교수·학생·강의실 화면) · `ui/`(상태·위젯·표) · `core/`(배정 엔진 `scheduler.py`, 독립 검증기 `validator.py`, 자연어 `nlparse.py`·`llm.py`) · `prompts/`(Claude 프롬프트)
-- 실행: `streamlit run app.py` / 테스트: `python -m pytest -q` (57개 통과 상태)
+- 실행: `streamlit run app.py` / 테스트: `python -m pytest -q` (58개 통과 상태)
 - 기본 데이터: `data/custom/*.csv` (원본 엑셀 `data/custom/source/dataset_2026-2.xlsx`, 변환 `scripts/import_xlsx.py`). 대형강의실 3곳만 시험좌석=좌석 전체, 나머지는 2/3.
 - 개발 기록: `DEVLOG.md` (단계별 문제와 해결). 새 작업도 여기에 기록.
 
@@ -27,6 +27,7 @@
 
 ## 교수 화면 (11/04 개편)
 - 연로한 교수님 기준 4단계 화면(`views/professor.py`): ① 과목 → ② 시험 시간 버튼(`EXAM_DURATION_BUTTONS`, 저장 전 미리 보기로 시간표 블록 길이·가능 칸이 바뀜) → ③ 시간표(`ui/board.py`)에서 초록 칸 누르기 → ④ 확정/되돌리기. 자연어·영향 분석·전후 비교는 '더 많은 기능' 접이식.
+- 학생 화면(`views/student.py`): 학생 선택 → 시간표 하나. 교수 확정 전 시험은 점선 '예상'(현재 배정안), 확정(`S.confirmed`)하면 남색 '확정'. 관리자 발표 알림은 접이식.
 
 ## 남은 일 / 확인할 것
 - 11/13까지 keep-awake 실패 메일이 오면 원인 확인·조치. 심사가 끝나면 Actions에서 "앱 깨워 두기" 끄기.

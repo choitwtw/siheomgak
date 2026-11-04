@@ -79,3 +79,22 @@ def test_professor_sets_exam_duration_with_buttons():
     undo[0].click()
     run(at)
     assert at.session_state["ds"].course_map[code].exam_minutes == before
+
+
+def test_student_timetable_shows_expected_then_confirmed():
+    """학생 화면: 교수 확정 전에는 '예상', 확정하면 같은 시험이 '확정'으로 시간표에 표시된다"""
+    from core.scheduler import Assignment
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.run()
+    at.switch_page("views/student.py")
+    run(at)
+    sid = at.session_state["student_id"]
+    ds = at.session_state["ds"]
+    code = next(c for c in ds.courses_of[sid] if ds.course_map[c].exam_type != "없음")
+    name = ds.course_map[code].name
+    html_all = lambda: " ".join(m.value for m in at.markdown)   # noqa: E731
+    assert f"{name} 시험</b>예상" in html_all()
+    row = at.session_state["schedule"].set_index("course_code").loc[code]
+    at.session_state["confirmed"][code] = Assignment(int(row.day), int(row.start), str(row.room_id))
+    run(at)
+    assert f"{name} 시험 ✔</b>확정" in html_all()
