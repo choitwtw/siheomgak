@@ -43,6 +43,8 @@ EXAM_TYPE_LABEL = {
     EXAM_NONE: "시험 없음(과제 대체)",
 }
 EXAM_MINUTES_CHOICES = [60, 75, 90, 120]
+# 교수 화면에서 버튼으로 고르는 시험 시간(분). 검증 규칙은 30~240분, 15분 단위
+EXAM_DURATION_BUTTONS = [60, 75, 90, 120, 150, 180]
 
 # ---- 시간 모델 기본값 ----
 DEFAULT_DAY_START = "09:00"

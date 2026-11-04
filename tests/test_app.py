@@ -34,3 +34,48 @@ def test_first_solve_shared_between_sessions():
     first = ds.courses.iloc[0]
     changed = ds.with_course_update(first.course_code, exam_minutes=int(first.exam_minutes) + 15)
     assert state._fingerprint(changed) != state._fingerprint(ds)
+
+
+def test_minutes_text():
+    from core.timeutil import minutes_text
+    assert minutes_text(60) == "1시간"
+    assert minutes_text(90) == "1시간 30분"
+    assert minutes_text(135) == "2시간 15분"
+    assert minutes_text(45) == "45분"
+
+
+def run(at):
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+
+
+def test_professor_sets_exam_duration_with_buttons():
+    """교수 화면 ② 시험 시간 버튼: 고르면 저장 전 미리 보기, 저장하면 시험 시간과 일정 길이가 바뀌고, 되돌리기로 원래대로"""
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.run()
+    at.switch_page("views/professor.py")
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    code = at.session_state["avail_code"]
+    ds = at.session_state["ds"]
+    c = ds.course_map[code]
+    assert c.exam_type == "별도"                     # 기본 데이터 첫 교수의 첫 과목 (별도 시험)
+    before = c.exam_minutes
+    new = 60 if before != 60 else 90
+    at.session_state[f"dur_{code}"] = new
+    run(at)
+    texts = " ".join(m.value for m in at.markdown)
+    assert "바꾸려고 합니다" in texts and "아직 저장하지 않았습니다" in texts
+    assert at.session_state["ds"].course_map[code].exam_minutes == before      # 저장 전에는 데이터 그대로
+    save = [b for b in at.button if b.key in (f"save_dur_{code}", f"auto_dur_{code}")]
+    assert save, "저장 또는 자동 찾기 버튼이 있어야 한다"
+    save[0].click()
+    run(at)
+    assert at.session_state["ds"].course_map[code].exam_minutes == new
+    row = at.session_state["schedule"].set_index("course_code").loc[code]
+    assert int(row.end) - int(row.start) == new
+    assert at.session_state["report"] is None or at.session_state["report"].metrics["hard_violations"] == 0
+    undo = [b for b in at.button if b.key == f"undo_{code}"]
+    undo[0].click()
+    run(at)
+    assert at.session_state["ds"].course_map[code].exam_minutes == before

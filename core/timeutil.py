@@ -31,6 +31,15 @@ def min_to_hm(m: int) -> str:
     return f"{m // 60:02d}:{m % 60:02d}"
 
 
+def minutes_text(m: int) -> str:
+    """시간 길이(분) → 읽기 쉬운 말: 90 → '1시간 30분', 120 → '2시간', 45 → '45분'"""
+    m = int(m)
+    h, r = divmod(m, 60)
+    if h and r:
+        return f"{h}시간 {r}분"
+    return f"{h}시간" if h else f"{r}분"
+
+
 def day_index(d: str) -> int:
     d = str(d).strip().replace("요일", "")
     if d not in WEEKDAYS:

@@ -14,50 +14,56 @@ CSS = """
 .eb, .eb * { box-sizing: border-box; }
 .eb { font-family: inherit; color: #171C2B; }
 .eb-grid { display: grid; border: 1px solid #E4E8F1; border-radius: 16px; background: #fff; overflow: hidden; }
-.eb-hd { text-align: center; padding: 10px 0; font-weight: 700; font-size: .9rem; border-bottom: 1px solid #E4E8F1; background: #FAFBFE; }
-.eb-hd small { display: block; color: #6B7385; font-weight: 500; font-size: .75rem; }
+.eb-hd { text-align: center; padding: 12px 0; font-weight: 800; font-size: 1.1rem; border-bottom: 1px solid #E4E8F1; background: #FAFBFE; }
+.eb-hd small { display: block; color: #4A5265; font-weight: 600; font-size: .9rem; }
 .eb-times { position: relative; }
-.eb-tick { position: absolute; right: 6px; font-size: .7rem; color: #6B7385; transform: translateY(-50%); }
+.eb-tick { position: absolute; right: 8px; font-size: .9rem; font-weight: 600; color: #4A5265; transform: translateY(-50%); }
 .eb-col { position: relative; border-left: 1px solid #E4E8F1; }
 .eb-line { position: absolute; left: 0; right: 0; border-top: 1px dashed #EEF0F5; }
-.eb-cell { position: absolute; left: 2px; right: 2px; border-radius: 5px; font-size: .66rem; display: flex;
+.eb-cell { position: absolute; left: 2px; right: 2px; border-radius: 6px; font-size: .82rem; font-weight: 600; display: flex;
            align-items: center; justify-content: center; user-select: none; }
 .eb-cell.free { background: #E3F6EE; color: #087F5B; }
 .eb-cell.busy { background: #FBE4E4; color: #C92A2A; }
 .eb-cell.prof { background: #F3F4F7; color: #9AA1B2; }
 .eb.movable .eb-cell { cursor: pointer; }
-.eb-ev { position: absolute; left: 5px; right: 5px; border-radius: 9px; padding: 4px 7px; font-size: .72rem; line-height: 1.25;
+.eb-ev { position: absolute; left: 5px; right: 5px; border-radius: 9px; padding: 5px 8px; font-size: .82rem; line-height: 1.3;
          overflow: hidden; z-index: 2; background: #E9ECF2; color: #3A4256; border: 1px solid #D8DDE8; pointer-events: none; }
-.eb-ev b { display: block; font-size: .76rem; }
+.eb-ev b { display: block; font-size: .9rem; }
 .eb-ev.other { background: #5C6B8A; color: #fff; border: none; }
-.eb-exam { position: absolute; left: 4px; right: 4px; border-radius: 9px; padding: 4px 8px; font-size: .74rem; line-height: 1.25;
+.eb-exam { position: absolute; left: 4px; right: 4px; border-radius: 9px; padding: 6px 9px; font-size: .85rem; line-height: 1.3;
            overflow: hidden; z-index: 3; background: #1C2E5A; color: #fff; box-shadow: 0 4px 12px rgba(28,46,90,.28); }
-.eb-exam b { display: block; font-size: .8rem; }
+.eb-exam b { display: block; font-size: .95rem; }
+.eb-exam .len { display: inline-block; margin: 3px 0 2px; padding: 1px 8px; border-radius: 999px; background: rgba(255,255,255,.2);
+               font-weight: 800; font-size: .9rem; }
+.eb-exam.preview { outline: 3px dashed #F59F00; outline-offset: 1px; }
+.eb-exam.preview .len { background: #F59F00; color: #1C2E5A; }
+.eb-exam.nofit { outline: 3px solid #E03131; outline-offset: 1px; }
+.eb-exam.nofit .len { background: #E03131; color: #fff; }
 .eb-exam.movable { cursor: grab; }
 .eb-exam.movable:active { cursor: grabbing; }
 .eb-exam .grip { float: right; opacity: .8; }
 .eb.dragging .eb-exam { opacity: .45; }
 .eb-prev { position: absolute; left: 3px; right: 3px; border-radius: 9px; z-index: 4; pointer-events: none;
-           padding: 4px 7px; font-size: .72rem; font-weight: 700; line-height: 1.25; }
+           padding: 5px 8px; font-size: .85rem; font-weight: 700; line-height: 1.25; }
 .eb-prev.good { border: 2.5px solid #0CA678; background: rgba(12,166,120,.16); color: #087F5B; }
 .eb-prev.bad { border: 2.5px solid #E03131; background: rgba(224,49,49,.14); color: #C92A2A; }
 .eb-prev.pick { border: 2.5px dashed #3B5BDB; background: rgba(59,91,219,.12); color: #1C2E5A; }
-.eb-panel { margin-top: 12px; border: 1px solid #C5D0F5; background: #F6F8FF; border-radius: 14px; padding: 14px 16px; }
+.eb-panel { margin-top: 14px; border: 2px solid #C5D0F5; background: #F6F8FF; border-radius: 14px; padding: 16px 18px; }
 .eb-panel.err { border-color: #F3B4B4; background: #FFF5F5; }
-.eb-panel h4 { margin: 0 0 4px 0; font-size: 1rem; }
-.eb-panel .muted { color: #6B7385; font-size: .82rem; margin-bottom: 10px; }
-.eb-rooms { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin: 8px 0 12px; }
-.eb-room { border: 1.5px solid #E4E8F1; background: #fff; border-radius: 12px; padding: 9px 11px; cursor: pointer; font-size: .82rem; }
-.eb-room b { display: block; font-size: .9rem; }
+.eb-panel h4 { margin: 0 0 6px 0; font-size: 1.2rem; }
+.eb-panel .muted { color: #4A5265; font-size: .98rem; margin-bottom: 10px; line-height: 1.5; }
+.eb-rooms { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin: 8px 0 14px; }
+.eb-room { border: 2px solid #E4E8F1; background: #fff; border-radius: 12px; padding: 11px 13px; cursor: pointer; font-size: .95rem; line-height: 1.45; }
+.eb-room b { display: block; font-size: 1.05rem; }
 .eb-room .seat { color: #6B7385; }
 .eb-room .fit { color: #087F5B; font-weight: 700; }
 .eb-room.sel { border-color: #1C2E5A; box-shadow: 0 0 0 3px rgba(59,91,219,.18); }
-.eb-room.cur::after { content: "현재"; float: right; font-size: .7rem; background: #EEF2FF; color: #1C2E5A; padding: 1px 6px; border-radius: 999px; }
-.eb-btns { display: flex; gap: 8px; flex-wrap: wrap; }
-.eb-btn { border: 1px solid #E4E8F1; background: #fff; border-radius: 10px; padding: 8px 16px; font-weight: 600; cursor: pointer; font-size: .88rem; font-family: inherit; }
+.eb-room.cur::after { content: "현재"; float: right; font-size: .82rem; background: #EEF2FF; color: #1C2E5A; padding: 1px 6px; border-radius: 999px; }
+.eb-btns { display: flex; gap: 10px; flex-wrap: wrap; }
+.eb-btn { border: 1.5px solid #D8DDE8; background: #fff; border-radius: 12px; padding: 12px 22px; font-weight: 700; cursor: pointer; font-size: 1.05rem; font-family: inherit; }
 .eb-btn.primary { background: #1C2E5A; border-color: #1C2E5A; color: #fff; }
 .eb-btn:disabled { opacity: .5; cursor: not-allowed; }
-.eb-help { font-size: .82rem; color: #6B7385; margin: 0 0 8px; }
+.eb-help { font-size: 1rem; color: #4A5265; margin: 0 0 10px; line-height: 1.55; }
 .eb-help b { color: #1C2E5A; }
 """
 
@@ -81,7 +87,7 @@ export default function(component) {
   const help = document.createElement('p');
   help.className = 'eb-help';
   help.innerHTML = D.movable
-    ? '<b>남색 시험 블록을 끌어 옮기세요(칸을 클릭해도 됩니다).</b> 끄는 동안 시험 시간 전체가 초록이면 놓을 수 있고, 빨강이면 그 시간에 다른 시험·수업이 있는 학생이 있어 놓을 수 없습니다.'
+    ? '<b>원하는 시간의 초록색 칸을 한 번 누르세요.</b> 시험이 들어갈 자리가 초록 테두리로 보이면 가능, 빨간 테두리면 불가입니다. 남색 시험 블록을 끌어다 놓아도 됩니다.'
     : esc(D.locked_reason || '이 시험은 옮길 수 없습니다.');
   root.appendChild(help);
 
@@ -170,10 +176,12 @@ export default function(component) {
   }
   // ---- 이 과목 시험 블록 ----
   const ex = document.createElement('div');
-  ex.className = 'eb-exam' + (D.movable ? ' movable' : '');
+  ex.className = 'eb-exam' + (D.movable ? ' movable' : '') + (X.preview ? (X.fits ? ' preview' : ' nofit') : '');
   ex.style.top = y(X.start) + 'px';
   ex.style.height = h(X.start, X.end) + 'px';
-  ex.innerHTML = `${D.movable ? '<span class="grip">⠿</span>' : ''}<b>${esc(X.title)}</b>${esc(X.sub)}`;
+  const tag = X.preview ? (X.fits ? ' · 저장 전' : ' · 이 자리엔 불가') : '';
+  ex.innerHTML = `${D.movable ? '<span class="grip">⠿</span>' : ''}<b>${esc(X.title)}</b>`
+    + `<span class="len">${esc(X.dur_label || '')}${tag}</span><br>${esc(X.sub)}`;
   if (D.movable) {
     ex.draggable = true;
     ex.addEventListener('dragstart', (ev) => {
@@ -199,10 +207,14 @@ export default function(component) {
   }
 
   function refuse(day, start, reason) {
+    panel.style.display = '';
     panel.className = 'eb-panel err';
     panel.innerHTML = `<h4>${esc(D.days[day].label)} ${esc(D.days[day].sub)} ${hm(start)}에는 시작할 수 없습니다</h4>
       <div class="muted">${esc(reason)}</div><div class="eb-btns"><button class="eb-btn back">돌아가기</button></div>`;
-    panel.querySelector('.back').addEventListener('click', () => choose(selected || X.slot));
+    panel.querySelector('.back').addEventListener('click', () => {
+      const back = selected || X.slot;
+      if (D.slots[back]) { choose(back); } else { hidePreview(); panel.style.display = 'none'; }
+    });
   }
 
   function choose(slotId) {
@@ -215,6 +227,7 @@ export default function(component) {
   }
 
   function renderPanel() {
+    panel.style.display = '';   // 지금 자리가 불가라 처음에 숨겨 둔 경우에도 칸을 누르면 보이게
     panel.className = 'eb-panel';
     const s = D.slots[selected];
     const same = selected === X.slot;
@@ -227,8 +240,9 @@ export default function(component) {
                     <b>${esc(r.rid)}</b><span class="seat">좌석 ${r.cap} · 시험 좌석 ${r.exam_cap}</span><br>
                     <span class="fit">수강 ${D.enrollment}명 → 여유 ${left}석</span></div>`;
         }).join('') + `</div>`;
-    const canGo = D.room_fixed ? !same : (room && (!same || room !== X.room));
-    const label = same ? '강의실만 바꾸기' : '이 시간·강의실로 옮기기';
+    // 시험 시간을 바꾸는 중(preview)이면 같은 자리라도 '새 시험 시간으로 저장'할 수 있다
+    const canGo = D.room_fixed ? (!same || X.preview) : (room && (!same || room !== X.room || X.preview));
+    const label = same ? (X.preview ? `${X.dur_label}으로 저장` : '강의실만 바꾸기') : '이 시간·강의실로 옮기기';
     panel.innerHTML = `<h4>${title}</h4><div class="muted">${esc(s.info)}${D.room_fixed ? '' : ' · 그 시간에 비어 있고 시험 좌석이 충분한 강의실만 보여 줍니다.'}</div>
       ${roomsHtml}
       <div class="eb-btns"><button class="eb-btn primary" ${canGo ? '' : 'disabled'}>${label}</button>
@@ -241,7 +255,9 @@ export default function(component) {
       setTriggerValue('move', { day: s.day, start: s.start, room: D.room_fixed ? X.room : room, t: Date.now() });
     });
     const cancel = panel.querySelector('.eb-btn.cancel');
-    if (cancel) cancel.addEventListener('click', () => choose(X.slot));
+    if (cancel) cancel.addEventListener('click', () => {
+      if (D.slots[X.slot]) { choose(X.slot); } else { selected = null; hidePreview(); panel.style.display = 'none'; }
+    });
   }
 
   if (D.movable && D.slots[X.slot]) { choose(X.slot); } else { panel.style.display = 'none'; }

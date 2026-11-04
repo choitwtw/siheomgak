@@ -1,4 +1,9 @@
-"""교수 화면: 시험 가능 시간표 확인 → 추천 일정·이유·경고 → 자연어 수정 → 재배정 → 전/후 비교 → (우선순위 차례에) 확정."""
+"""교수 화면 — 연로한 교수님도 쉽게 쓰도록 네 단계로 나눈 화면.
+
+① 과목 고르기 → ② 시험 시간 정하기(버튼) → ③ 시간표에서 날짜·시간 고르기 → ④ 확인하고 확정하기.
+시험 시간을 바꾸면 저장 전에도 시간표의 시험 블록 길이와 초록/빨강(가능/불가) 칸이 새 길이로 바로 다시 계산된다.
+말로 조건 바꾸기(AI)·영향 분석·변경 전/후 비교는 아래 '더 많은 기능'에 둔다.
+"""
 from __future__ import annotations
 
 import dataclasses
@@ -9,15 +14,15 @@ import pandas as pd
 import streamlit as st
 
 from core import llm
-from core.config import DAYS, EXAM_IN_CLASS, EXAM_NONE, EXAM_TYPE_LABEL, GENERAL_DEPT
+from core.config import DAYS, EXAM_DURATION_BUTTONS, EXAM_IN_CLASS, EXAM_NONE, EXAM_TYPE_LABEL, GENERAL_DEPT
 from core.constraints import CourseRequest, validate_request
 from core.explain import (
+    busy_map,
     course_facts,
     evaluate_slots,
     impact_facts,
     llm_impact,
     llm_reason,
-    busy_map,
     slot_map,
     template_impact,
     template_reason,
@@ -25,19 +30,49 @@ from core.explain import (
 from core.nlparse import ParseContext, parse_request
 from core.priority import dept_rank
 from core.settings import NOTIFY_INSTANT
-from core.timeutil import min_to_hm, windows_to_text
+from core.timeutil import min_to_hm, minutes_text, windows_to_text
 from ui import state
 from ui.board import exam_board
 from ui.calendar import legend
-from ui.style import badge, hero, metric_cards, reason_box, warn_box
+from ui.style import ACCENT, MUTED, NAVY, badge, hero, metric_cards, reason_box, warn_box
 
 S = st.session_state
 state.ensure_schedule()
 ds = S.ds
 S.setdefault("llm_cache", {})
 
+# 교수 화면은 글자·버튼을 크게 (이 화면에서만 적용)
+st.markdown(f"""<style>
+.sg-step {{ display:flex; align-items:center; gap:14px; margin: 2rem 0 .7rem; }}
+.sg-step .n {{ width:44px; height:44px; border-radius:50%; background:{NAVY}; color:#fff; font-weight:800; font-size:1.35rem;
+              display:flex; align-items:center; justify-content:center; flex:none; }}
+.sg-step .t {{ font-size:1.5rem; font-weight:800; letter-spacing:-.02em; }}
+.sg-step .d {{ color:{MUTED}; font-size:1.02rem; margin-top:2px; }}
+.sg-say {{ font-size:1.12rem; line-height:1.65; margin:.3rem 0 .6rem; }}
+.sg-say b {{ color:{NAVY}; }}
+.sg-dur {{ font-size:1.25rem; margin:.2rem 0 .8rem; }}
+.sg-dur b {{ font-size:1.6rem; color:{NAVY}; }}
+.sg-dur .new {{ color:{ACCENT}; }}
+.stApp [data-testid="stMarkdownContainer"] p, .stApp [data-testid="stMarkdownContainer"] li {{ font-size:1.05rem; }}
+.stApp .stButton > button {{ min-height:3rem; font-size:1.05rem; padding:.6rem 1.3rem; }}
+.stApp [data-testid="stButtonGroup"] button {{ min-height:3.1rem; font-size:1.12rem; padding:.55rem 1.25rem; font-weight:700; }}
+.stApp [data-testid="stWidgetLabel"] p {{ font-size:1.05rem !important; font-weight:700; }}
+.stApp [data-baseweb="select"] > div {{ min-height:3rem; font-size:1.08rem; }}
+.sg-reason, .sg-warn {{ font-size:1.05rem !important; }}
+</style>""", unsafe_allow_html=True)
+
+
+def step(n: int, title: str, desc: str = ""):
+    st.markdown(f"<div class='sg-step'><div class='n'>{n}</div><div><div class='t'>{html.escape(title)}</div>"
+                f"<div class='d'>{html.escape(desc)}</div></div></div>", unsafe_allow_html=True)
+
+
+def say(text_html: str):
+    st.markdown(f"<div class='sg-say'>{text_html}</div>", unsafe_allow_html=True)
+
+
 hero("PROFESSOR", "교수 화면",
-     "수강생 시간표를 대조한 시험 가능 시간을 확인하고, 추천 일정을 조정해 우선순위 차례에 확정합니다.")
+     "① 과목을 고르고 ② 시험 시간을 정한 뒤 ③ 시간표에서 날짜·시간을 고르고 ④ 확정하면 끝납니다.")
 
 if S.schedule is None:
     st.warning("배정 결과가 없습니다. 관리자 대시보드에서 배정을 실행해 주세요.")
@@ -56,9 +91,10 @@ pids = sorted([p for p, cs in ds.prof_courses.items()
 turn = state.current_turn()
 if S.get("prof_id") not in pids:
     S.prof_id = next((p for p in pids if pm[p].dept == turn), pids[0])
-pid = st.selectbox("교수 선택", pids, index=pids.index(S.prof_id),
-                   format_func=lambda p: f"{rank.get(pm[p].dept)}순위 {pm[p].dept} · {pm[p].name} 교수 ({p})"
-                   + ("  ← 확정 차례" if pm[p].dept == turn and S.settings.priority_lock else ""))
+lock = S.settings.priority_lock
+pid = st.selectbox("교수님 성함", pids, index=pids.index(S.prof_id),
+                   format_func=lambda p: f"{pm[p].name} 교수 · {pm[p].dept} ({rank.get(pm[p].dept)}순위)"
+                   + ("  ← 지금 확정 차례" if pm[p].dept == turn and lock else ""))
 S.prof_id = pid
 prof = pm[pid]
 my_codes = ds.prof_courses.get(pid, [])
@@ -71,17 +107,12 @@ if S.settings.priority_lock:
     if turn is None:
         st.success("모든 학과의 시험 확정이 끝났습니다. 관리자가 발표하면 학생에게 알림이 갑니다.")
     elif turn == prof.dept:
-        st.success(f"지금은 **{rank.get(turn)}순위 {turn}**의 확정 차례입니다. 아래 일정을 확인하고 확정해 주세요.")
+        st.success(f"지금은 **{prof.dept}**의 확정 차례입니다. 아래 순서대로 일정을 확인하고 확정해 주세요.")
     else:
         st.info(f"지금은 **{rank.get(turn)}순위 {turn}**의 확정 차례입니다. {prof.dept}는 상위 학과가 확정을 마친 뒤 "
-                "확정할 수 있습니다. 그동안 시험 가능 시간을 확인하고 조건을 조정해 두세요.")
-st.write("")
+                "확정할 수 있습니다. 그동안 시험 시간과 날짜를 미리 정해 두세요.")
 
 use_ai = llm.available()
-if use_ai:
-    use_ai = st.toggle("AI 문장으로 설명 보기", value=True,
-                       help="계산된 수치만 Claude에게 넘겨 자연스러운 문장으로 바꿉니다. 끄면 템플릿 문장을 씁니다.")
-
 rep = state.current_report()
 per_course = rep.per_course if rep else {}
 
@@ -129,232 +160,350 @@ def apply_request(code: str, req: CourseRequest, text: str, mode: str, targets: 
     return True
 
 
-# ---------------------------------------------------------------------------
-# 내 시간표 + 시험 가능 시간 (수강생 전원의 시간표 대조)
-# ---------------------------------------------------------------------------
+def undo(lg: dict):
+    """마지막 변경을 되돌린다 (시험 시간을 바꿨다면 시험 시간도)."""
+    S.schedule = lg["before"]
+    S.change_log = [x for x in S.change_log if x is not lg]
+    S.requests = dict(lg["before_reqs"])
+    if lg.get("before_minutes") and S.ds.course_map[lg["code"]].exam_minutes != lg["before_minutes"]:
+        S.ds = S.ds.with_course_update(lg["code"], exam_minutes=int(lg["before_minutes"]))
+    for t in lg["targets"]:
+        S.pop(f"dur_{t}", None)          # 시험 시간 버튼도 저장된 값으로 되돌린다
+    S.report = None
+
+
+def show_move_error():
+    err = S.pop("move_error", None)
+    if err:
+        st.error(f"**바꾸지 못했습니다 — {err[0]}**. 기존 일정은 그대로 유지됩니다.")
+        for m in err[1]:
+            st.markdown(f"- {m}")
+
+
+def exam_len(c, minutes: int | None = None) -> int:
+    """시험이 차지하는 시간(분). 수업시간 시험은 정규 수업 길이 이상."""
+    m = c.exam_minutes if minutes is None else minutes
+    return max(c.class_len, m) if c.exam_type == EXAM_IN_CLASS else m
+
+
 exam_codes = [x for x in my_codes if cm[x].exam_type != EXAM_NONE]
-st.markdown("### 📅 내 시간표와 시험 가능 시간")
-if exam_codes:
-    with st.container(border=True):
-        stg = S.settings
-        sel = st.segmented_control("과목", exam_codes, default=S.get("avail_code") if S.get("avail_code") in exam_codes
-                                   else exam_codes[0], format_func=lambda x: f"{cm[x].name}", key=f"avail_{pid}")
-        sel = sel or exam_codes[0]
-        S.avail_code = sel
-        csel = cm[sel]
-        st.caption(f"{csel.name} 수강생 {csel.enrollment}명 각자의 시험 기간 시간표를 대조했습니다. 다른 과목에 이미 잡힌 시험, "
-                   "진행 중인 수업, 교양 수업이 있는 시간은 그 학생에게 막힌 시간입니다. 칸의 숫자는 그 30분에 막힌 학생 수입니다.")
-        # 보드에서는 이 과목에 걸린 '이 시간에만 / 이 강의실만' 조건(직전 옮기기 결과)을 빼고 계산한다.
-        # 새로 옮기면 그 조건이 새 시간·강의실로 바뀌기 때문 (불가 시간·선호 등 다른 요청은 그대로 반영)
-        view_reqs = dict(S.requests)
-        if sel in view_reqs:
-            view_reqs[sel] = dataclasses.replace(view_reqs[sel], allowed=[], room_ids=[])
-        # 다른 과목에 배정된 시험은 확정 여부와 관계없이 모두 막힌 시간으로 본다
-        smap = slot_map(ds, S.schedule, stg, view_reqs, sel)
-        bmap = busy_map(ds, S.schedule, stg, view_reqs, sel)
-        cells = []
-        for b in bmap:
-            when = f"{stg.date_label(b['day'])} {min_to_hm(b['start'])}~{min_to_hm(b['end'])}"
-            if b["unavail"]:
-                cells.append(dict(b, cls="prof", label="교수 불가", tip=f"{when} — 교수 불가 시간"))
-            elif b["prof_busy"]:
-                cells.append(dict(b, cls="prof", label="내 일정", tip=f"{when} — 교수님의 다른 수업·시험"))
-            elif b["busy"]:
-                cells.append(dict(b, cls="busy", label=f"{b['busy']}명",
-                                  tip=f"{when} — 수강생 {b['busy']}명이 다른 시험·수업 중 (이 시간에 시험 불가)"))
-            else:
-                cells.append(dict(b, cls="free", label="", tip=f"{when} — 수강생 전원·교수님 모두 비어 있음"))
-        evs = []
-        for oc in my_codes:
-            o = cm[oc]
-            if o.exam_type == EXAM_NONE:
-                for d, s0, e0 in stg.class_blocks(o):
-                    evs.append(dict(day=d, start=s0, end=e0, cls="", title=o.name, sub="내 정규 수업(진행)"))
-            r0 = state.exam_row(oc)
-            if r0 is not None and oc != sel:
-                conf = oc in S.confirmed
-                evs.append(dict(day=int(r0.day), start=int(r0.start), end=int(r0.end), cls="other",
-                                title=f"{o.name} 시험" + (" ✔" if conf else ""),
-                                sub=f"{'확정' if conf else '현재 추천'} · {min_to_hm(r0.start)}~{min_to_hm(r0.end)} · {r0.room_id}"))
-        n_ok = sum(x["status"] == "ok" for x in smap)
-        n_bur = sum(x["status"] == "burden" for x in smap)
-        n_free = sum(c_["cls"] == "free" for c_ in cells)
-        metric_cards([
-            dict(label="시험을 시작할 수 있는 시각", value=n_ok + n_bur, unit="개", tone="ok",
-                 sub=f"학생 부담 없음 {n_ok} · 하루 3과목·연속 시험 발생 {n_bur}"),
-            dict(label="수강생 전원이 비어 있는 시간", value=n_free * 30 // 60, unit="시간", tone="info",
-                 sub=f"30분 칸 {n_free}개 (초록)"),
-            dict(label="시험 시간", value=csel.in_class_exam_minutes if csel.exam_type == EXAM_IN_CLASS else csel.exam_minutes,
-                 unit="분", tone="info", sub=EXAM_TYPE_LABEL[csel.exam_type]),
-        ])
-        st.markdown(legend([("background:#E3F6EE", "수강생·교수 모두 비어 있음"), ("background:#FBE4E4", "N명 = 그 30분에 다른 시험·수업이 있는 학생 수"),
-                            ("background:#F3F4F7", "교수 불가·내 일정"), ("background:#1C2E5A", "이 과목 시험 (끌어서 옮기기)"),
-                            ("background:#5C6B8A", "내 다른 과목 시험"), ("border:2.5px solid #0CA678", "끌 때: 놓을 수 있음"),
-                            ("border:2.5px solid #E03131", "끌 때: 불가")]),
-                    unsafe_allow_html=True)
-        row_sel = state.exam_row(sel)
-        movable = sel not in S.confirmed
-        locked_reason = "확정된 시험이라 옮길 수 없습니다. 바꾸려면 아래 과목 카드에서 확정을 취소하세요." if not movable else ""
-        slots, blocked = {}, {}
-        for x in smap:
-            sid = f"{x['day']}-{x['start']}"
-            if x["status"] == "blocked":
-                blocked[sid] = x["reason"]
-                continue
-            info = ("수강생 전원 충돌 없음 · 하루 3과목·연속 시험 0명" if x["status"] == "ok"
-                    else f"수강생 충돌 없음 · 다만 하루 3과목 이상 {x['overload']}명 · 연속 시험 {x['consecutive']}명")
-            slots[sid] = dict(day=x["day"], start=x["start"], end=x["end"], info=info,
-                              when=f"{stg.date_label(x['day'])} {min_to_hm(x['start'])}~{min_to_hm(x['end'])}",
-                              rooms=x["rooms"])
-        default_block = ("수업시간 시험은 정규 수업 회차 시작 시각에만 볼 수 있습니다" if csel.exam_type == EXAM_IN_CLASS
-                         else "시험이 하루 시험 시간 끝을 넘어갑니다")
-        cur_sid = f"{int(row_sel.day)}-{int(row_sel.start)}" if row_sel is not None else None
-        st_min = min([stg.day_start] + [e["start"] for e in evs])
-        en_min = max([stg.day_end] + [e["end"] for e in evs])
-        board_data = dict(
-            days=[dict(label=stg.day_name(k), sub=stg.short_label(k).split("(")[0]) for k in range(stg.n_days)],
-            start=st_min, end=en_min, ppm=1.05,
-            ticks=[dict(m=m, label=min_to_hm(m)) for m in range((st_min // 60 + (st_min % 60 > 0)) * 60, en_min + 1, 60)],
-            cells=cells, slots=slots, blocked=blocked, default_block=default_block,
-            events=[dict(day=e["day"], start=e["start"], end=e["end"], title=e["title"], sub=e["sub"], cls=e["cls"])
-                    for e in evs],
-            exam=dict(day=int(row_sel.day), start=int(row_sel.start), end=int(row_sel.end), room=str(row_sel.room_id),
-                      slot=cur_sid, title=f"{csel.name} 시험" + (" ✔" if sel in S.confirmed else ""),
-                      sub=f"{min_to_hm(row_sel.start)}~{min_to_hm(row_sel.end)} · {row_sel.room_id}"
-                          f" (시험 좌석 {ds.room_map[row_sel.room_id].exam_capacity}석)") if row_sel is not None else None,
-            enrollment=csel.enrollment, movable=movable and row_sel is not None,
-            room_fixed=csel.exam_type == EXAM_IN_CLASS, locked_reason=locked_reason,
-        )
-        if row_sel is not None:
-            mv = exam_board(board_data, key=f"board_{sel}")
-            if mv:
-                d, s0 = int(mv["day"]), int(mv["start"])
-                e0 = s0 + (csel.in_class_exam_minutes if csel.exam_type == EXAM_IN_CLASS else csel.exam_minutes)
-                spec = {"allowed": [{"day": stg.day_name(d), "start": min_to_hm(s0), "end": min_to_hm(e0)}],
-                        "summary": f"{stg.date_label(d)} {min_to_hm(s0)} 시작" + (
-                            "" if csel.exam_type == EXAM_IN_CLASS else f" · {mv['room']}")}
-                if csel.exam_type != EXAM_IN_CLASS:
-                    spec["room"] = {"min_capacity": None, "building": None, "room_ids": [str(mv["room"])]}
-                req = validate_request(spec, source="시간표에서 옮기기")
-                ok = apply_request(sel, req, text=f"시간표에서 {req.summary}(으)로 옮기기", mode="드래그 앤 드롭")
-                if ok:
-                    st.toast(f"{csel.name} 시험을 {req.summary}(으)로 옮겼습니다.", icon="✅")
-                    st.rerun()
-        err = S.pop("move_error", None)
-        if err:
-            st.error(f"**옮기지 못했습니다 — {err[0]}**. 기존 일정은 그대로 유지됩니다.")
-            for m in err[1]:
-                st.markdown(f"- {m}")
-else:
+no_exam = [x for x in my_codes if cm[x].exam_type == EXAM_NONE]
+if not exam_codes:
     st.info("시험이 있는 담당 과목이 없습니다.")
+    st.stop()
 
 # ---------------------------------------------------------------------------
-# 내 과목 카드
+# ① 과목 고르기
 # ---------------------------------------------------------------------------
-st.markdown("### 내 과목 추천 일정")
-for code in my_codes:
-    c = cm[code]
-    row = state.exam_row(code)
-    confirmed = code in S.confirmed
-    with st.container(border=True):
-        top_l, top_r = st.columns([3.2, 1.4])
-        status = badge("확정", "ok") if confirmed else (badge("시험 없음", "gray") if c.exam_type == EXAM_NONE
-                                                       else badge("추천 · 미확정", ""))
-        top_l.markdown(f"<div class='sg-big'>{html.escape(c.name)} <span class='sg-muted'>{code}</span></div>"
-                       f"<div style='margin-top:4px'>{badge(EXAM_TYPE_LABEL[c.exam_type], 'gray')}{status}"
-                       f"{badge(f'수강 {c.enrollment}명', 'gray')}{badge(f'시험 {c.exam_minutes}분', 'gray')}</div>",
-                       unsafe_allow_html=True)
-        if c.exam_type == EXAM_NONE or row is None:
-            st.markdown("<div class='sg-muted'>시험 없음(과제 대체) 과목입니다. 시험 주간에도 정규 수업 "
-                        f"({'·'.join(DAYS[d] for d in c.days)} {min_to_hm(c.start)}~{min_to_hm(c.end)}, {c.room})이 진행되어 "
-                        "수강생은 이 시간에 다른 시험을 볼 수 없습니다.</div>", unsafe_allow_html=True)
-            continue
+step(1, "과목 고르기", "시험 일정을 정할 과목을 누르세요.")
+sel = st.segmented_control("과목", exam_codes, default=S.get("avail_code") if S.get("avail_code") in exam_codes
+                           else exam_codes[0], format_func=lambda x: f"{cm[x].name}" + (" ✔" if x in S.confirmed else ""),
+                           key=f"avail_{pid}", label_visibility="collapsed")
+sel = sel or exam_codes[0]
+S.avail_code = sel
+csel = cm[sel]
+stg = S.settings
+row_sel = state.exam_row(sel)
+confirmed_sel = sel in S.confirmed
+say(f"<b>{html.escape(csel.name)}</b> · 수강생 {csel.enrollment}명 · {EXAM_TYPE_LABEL[csel.exam_type]}"
+    + (f" · 지금 일정: <b>{state.slot_text(int(row_sel.day), int(row_sel.start), int(row_sel.end))}</b>, {row_sel.room_id}"
+       if row_sel is not None else ""))
+if no_exam:
+    st.caption("시험 없음(과제 대체) 과목: " + ", ".join(cm[x].name for x in no_exam)
+               + " — 시험 기간에도 정규 수업이 진행되어, 수강생은 그 시간에 다른 시험을 볼 수 없습니다.")
+
+# ---------------------------------------------------------------------------
+# ② 시험 시간 정하기
+# ---------------------------------------------------------------------------
+step(2, "시험 시간 정하기", "시험을 몇 시간 동안 볼지 누르세요. 시간표의 시험 칸 크기가 바로 바뀝니다.")
+saved = csel.exam_minutes
+dkey = f"dur_{sel}"
+if csel.exam_type == EXAM_IN_CLASS:
+    dur_new = saved
+    say(f"이 과목은 <b>수업시간 시험</b>이라 정규 수업 시간({minutes_text(csel.class_len)}) 동안 정규 강의실에서 봅니다. "
+        "시험 기간 중 어느 수업 날에 볼지만 ③에서 고르시면 됩니다.")
+else:
+    opts = sorted(set(EXAM_DURATION_BUTTONS) | {saved})
+    if S.get(dkey) not in opts:
+        S[dkey] = saved
+    choice = st.segmented_control("시험 시간", opts, key=dkey, format_func=minutes_text,
+                                  disabled=confirmed_sel, label_visibility="collapsed")
+    dur_new = int(choice or saved)
+    if confirmed_sel:
+        st.caption("🔒 확정된 시험은 시험 시간을 바꿀 수 없습니다. 바꾸려면 ④에서 확정을 취소하세요.")
+preview = dur_new != saved   # 저장하기 전 미리 보기 중
+
+# 미리 보기: 새 시험 시간으로 바꾼 데이터로 시작 가능 시각을 다시 계산한다 (저장 전에는 실제 일정을 바꾸지 않음)
+view_ds = ds.with_course_update(sel, exam_minutes=dur_new) if preview else ds
+# 보드에서는 이 과목에 걸린 '이 시간에만 / 이 강의실만' 조건(직전 옮기기 결과)을 빼고 계산한다.
+# 새로 옮기면 그 조건이 새 시간·강의실로 바뀌기 때문 (불가 시간·선호 등 다른 요청은 그대로 반영)
+view_reqs = dict(S.requests)
+if sel in view_reqs:
+    view_reqs[sel] = dataclasses.replace(view_reqs[sel], allowed=[], room_ids=[])
+smap = slot_map(view_ds, S.schedule, stg, view_reqs, sel)
+dur_len = exam_len(csel, dur_new)
+here = None
+if row_sel is not None:
+    here = next((x for x in smap if x["day"] == int(row_sel.day) and x["start"] == int(row_sel.start)), None)
+fits_here = here is not None and here["status"] != "blocked"
+n_start = sum(x["status"] != "blocked" for x in smap)
+
+if csel.exam_type != EXAM_IN_CLASS:
+    if not preview or row_sel is None:
+        st.markdown(f"<div class='sg-dur'>현재 시험 시간: <b>{minutes_text(saved)}</b> ({saved}분)</div>",
+                    unsafe_allow_html=True)
+    else:
+        st.markdown(f"<div class='sg-dur'>시험 시간을 <b>{minutes_text(saved)}</b> → <b class='new'>{minutes_text(dur_new)}</b>"
+                    "으로 바꾸려고 합니다. <span class='sg-muted'>아직 저장하지 않았습니다.</span></div>",
+                    unsafe_allow_html=True)
+        when_now = state.slot_text(int(row_sel.day), int(row_sel.start), int(row_sel.start) + dur_len)
+        if fits_here:
+            st.success(f"지금 날짜·시간 그대로 **{when_now}**에 볼 수 있습니다. 아래 버튼을 눌러 저장하세요.")
+        else:
+            why = here["reason"] if here else "하루 시험 시간이 끝나는 시각을 넘어갑니다"
+            st.error(f"지금 날짜·시간(**{when_now}**)에는 {minutes_text(dur_new)}을 넣을 수 없습니다 — {why}.  \n"
+                     + ("③ 시간표에서 **초록색 칸**을 눌러 새 시간을 고르시거나, '알맞은 시간 자동으로 찾기'를 누르세요."
+                        if n_start else "이 시험 시간으로는 지금 시간표에 빈자리가 없습니다. '알맞은 시간 자동으로 찾기'를 누르면 "
+                                        "다른 과목 일정까지 조정해 자리를 찾아봅니다."))
+        b1, b2, _ = st.columns([1.5, 1.3, 1.6])
+        if fits_here:
+            if b1.button(f"✅ {minutes_text(dur_new)}으로 저장", type="primary", width="stretch", key=f"save_dur_{sel}"):
+                rid = str(row_sel.room_id)
+                rid = rid if any(r["rid"] == rid for r in here["rooms"]) else here["room"]
+                spec = {"allowed": [{"day": stg.day_name(here["day"]), "start": min_to_hm(here["start"]),
+                                     "end": min_to_hm(here["end"])}],
+                        "room": {"min_capacity": None, "building": None, "room_ids": [rid]},
+                        "duration_minutes": dur_new,
+                        "summary": f"시험 시간 {minutes_text(dur_new)} · {stg.date_label(here['day'])} {min_to_hm(here['start'])} 시작"}
+                req = validate_request(spec, source="시험 시간 버튼")
+                if apply_request(sel, req, text=f"시험 시간을 {minutes_text(dur_new)}으로 변경", mode="시험 시간 버튼"):
+                    st.toast(f"{csel.name} 시험 시간을 {minutes_text(dur_new)}으로 바꿨습니다.", icon="✅")
+                    st.rerun()
+        elif b1.button("🔎 알맞은 시간 자동으로 찾기", type="primary", width="stretch", key=f"auto_dur_{sel}"):
+            req = validate_request({"duration_minutes": dur_new, "summary": f"시험 시간 {minutes_text(dur_new)}"},
+                                   source="시험 시간 버튼")
+            if apply_request(sel, req, text=f"시험 시간을 {minutes_text(dur_new)}으로 변경(자동 배치)", mode="시험 시간 버튼"):
+                st.toast(f"{csel.name} 시험 시간을 {minutes_text(dur_new)}으로 바꾸고 알맞은 시간에 배치했습니다.", icon="✅")
+                st.rerun()
+        b2.button(f"↩️ 원래대로 ({minutes_text(saved)})", width="stretch", key=f"reset_dur_{sel}",
+                  on_click=lambda k=dkey, v=saved: S.__setitem__(k, v))
+        show_move_error()
+
+# ---------------------------------------------------------------------------
+# ③ 시간표에서 날짜·시간 고르기
+# ---------------------------------------------------------------------------
+step(3, "날짜·시간 고르기", "초록색 칸을 누르면 그 시간으로 옮길 수 있습니다. 빨간 칸의 숫자는 그 시간에 다른 일정이 있는 학생 수입니다.")
+bmap = busy_map(ds, S.schedule, stg, view_reqs, sel)
+cells = []
+for b in bmap:
+    when = f"{stg.date_label(b['day'])} {min_to_hm(b['start'])}~{min_to_hm(b['end'])}"
+    if b["unavail"]:
+        cells.append(dict(b, cls="prof", label="교수 불가", tip=f"{when} — 교수 불가 시간"))
+    elif b["prof_busy"]:
+        cells.append(dict(b, cls="prof", label="내 일정", tip=f"{when} — 교수님의 다른 수업·시험"))
+    elif b["busy"]:
+        cells.append(dict(b, cls="busy", label=f"{b['busy']}명",
+                          tip=f"{when} — 수강생 {b['busy']}명이 다른 시험·수업 중 (이 시간에 시험 불가)"))
+    else:
+        cells.append(dict(b, cls="free", label="", tip=f"{when} — 수강생 전원·교수님 모두 비어 있음"))
+evs = []
+for oc in my_codes:
+    o = cm[oc]
+    if o.exam_type == EXAM_NONE:
+        for d, s0, e0 in stg.class_blocks(o):
+            evs.append(dict(day=d, start=s0, end=e0, cls="", title=o.name, sub="내 정규 수업(진행)"))
+    r0 = state.exam_row(oc)
+    if r0 is not None and oc != sel:
+        conf = oc in S.confirmed
+        evs.append(dict(day=int(r0.day), start=int(r0.start), end=int(r0.end), cls="other",
+                        title=f"{o.name} 시험" + (" ✔" if conf else ""),
+                        sub=f"{'확정' if conf else '현재 추천'} · {min_to_hm(r0.start)}~{min_to_hm(r0.end)} · {r0.room_id}"))
+say(f"<b>{minutes_text(dur_len)}</b> 시험을 시작할 수 있는 시각이 <b>{n_start}개</b> 있습니다."
+    if n_start else "지금 시험 시간으로 시작할 수 있는 시각이 없습니다. ②에서 시험 시간을 줄이거나 '말로 조건 바꾸기'를 이용해 주세요.")
+st.markdown(legend([("background:#E3F6EE", "초록 = 수강생·교수 모두 비어 있음"),
+                    ("background:#FBE4E4", "빨강 숫자 = 그 시간에 일정이 있는 학생 수"),
+                    ("background:#F3F4F7", "회색 = 교수 불가·내 일정"),
+                    ("background:#1C2E5A", "남색 = 이 과목 시험"),
+                    ("background:#5C6B8A", "내 다른 과목 시험")]),
+            unsafe_allow_html=True)
+movable = not confirmed_sel
+locked_reason = "확정된 시험이라 옮길 수 없습니다. 바꾸려면 ④에서 확정을 취소하세요." if not movable else ""
+slots, blocked = {}, {}
+for x in smap:
+    sid = f"{x['day']}-{x['start']}"
+    if x["status"] == "blocked":
+        blocked[sid] = x["reason"]
+        continue
+    info = ("수강생 전원 충돌 없음 · 하루 3과목·연속 시험 0명" if x["status"] == "ok"
+            else f"수강생 충돌 없음 · 다만 하루 3과목 이상 {x['overload']}명 · 연속 시험 {x['consecutive']}명")
+    slots[sid] = dict(day=x["day"], start=x["start"], end=x["end"], info=info,
+                      when=f"{stg.date_label(x['day'])} {min_to_hm(x['start'])}~{min_to_hm(x['end'])}",
+                      rooms=x["rooms"])
+default_block = ("수업시간 시험은 정규 수업 회차 시작 시각에만 볼 수 있습니다" if csel.exam_type == EXAM_IN_CLASS
+                 else "시험이 하루 시험 시간 끝을 넘어갑니다")
+cur_sid = f"{int(row_sel.day)}-{int(row_sel.start)}" if row_sel is not None else None
+st_min = min([stg.day_start] + [e["start"] for e in evs])
+en_min = max([stg.day_end] + [e["end"] for e in evs])
+if row_sel is not None:
+    ex_end = int(row_sel.start) + dur_len if preview else int(row_sel.end)
+    board_data = dict(
+        days=[dict(label=stg.day_name(k), sub=stg.short_label(k).split("(")[0]) for k in range(stg.n_days)],
+        start=st_min, end=max(en_min, ex_end), ppm=1.3,
+        ticks=[dict(m=m, label=min_to_hm(m)) for m in range((st_min // 60 + (st_min % 60 > 0)) * 60, en_min + 1, 60)],
+        cells=cells, slots=slots, blocked=blocked, default_block=default_block,
+        events=[dict(day=e["day"], start=e["start"], end=e["end"], title=e["title"], sub=e["sub"], cls=e["cls"])
+                for e in evs],
+        exam=dict(day=int(row_sel.day), start=int(row_sel.start), end=ex_end, room=str(row_sel.room_id),
+                  slot=cur_sid, title=f"{csel.name} 시험" + (" ✔" if confirmed_sel else ""),
+                  dur_label=minutes_text(dur_len), preview=preview, fits=fits_here,
+                  sub=f"{min_to_hm(row_sel.start)}~{min_to_hm(ex_end)} · {row_sel.room_id}"
+                      f" (시험 좌석 {ds.room_map[row_sel.room_id].exam_capacity}석)"),
+        enrollment=csel.enrollment, movable=movable,
+        room_fixed=csel.exam_type == EXAM_IN_CLASS, locked_reason=locked_reason,
+    )
+    # 시험 시간이 바뀌면 보드도 새로 그린다 (key 에 길이 포함)
+    mv = exam_board(board_data, key=f"board_{sel}_{dur_len}")
+    if mv:
+        d, s0 = int(mv["day"]), int(mv["start"])
+        e0 = s0 + dur_len
+        summary = f"{stg.date_label(d)} {min_to_hm(s0)} 시작" + ("" if csel.exam_type == EXAM_IN_CLASS else f" · {mv['room']}")
+        spec = {"allowed": [{"day": stg.day_name(d), "start": min_to_hm(s0), "end": min_to_hm(e0)}], "summary": summary}
+        if csel.exam_type != EXAM_IN_CLASS:
+            spec["room"] = {"min_capacity": None, "building": None, "room_ids": [str(mv["room"])]}
+        if preview:
+            spec["duration_minutes"] = dur_new
+            spec["summary"] = f"시험 시간 {minutes_text(dur_new)} · {summary}"
+        req = validate_request(spec, source="시간표에서 옮기기")
+        ok = apply_request(sel, req, text=f"시간표에서 {req.summary}(으)로 옮기기", mode="시간표에서 고르기")
+        if ok:
+            st.toast(f"{csel.name} 시험을 {req.summary}(으)로 정했습니다.", icon="✅")
+            st.rerun()
+    show_move_error()
+
+# ---------------------------------------------------------------------------
+# ④ 확인하고 확정하기
+# ---------------------------------------------------------------------------
+step(4, "확인하고 확정하기", "일정이 마음에 들면 확정을 누르세요. 확정하면 학생에게 알림이 갑니다.")
+c = csel
+row = row_sel
+with st.container(border=True):
+    top_l, top_r = st.columns([3.2, 1.6])
+    status = badge("확정", "ok") if confirmed_sel else badge("추천 · 미확정", "")
+    top_l.markdown(f"<div class='sg-big'>{html.escape(c.name)} <span class='sg-muted'>{sel}</span></div>"
+                   f"<div style='margin-top:4px'>{badge(EXAM_TYPE_LABEL[c.exam_type], 'gray')}{status}"
+                   f"{badge(f'수강 {c.enrollment}명', 'gray')}{badge('시험 ' + minutes_text(exam_len(c)), 'gray')}</div>",
+                   unsafe_allow_html=True)
+    if row is not None:
         room = ds.room_map.get(row.room_id)
         top_r.markdown(f"<div style='text-align:right'><div class='sg-big'>{state.slot_text(int(row.day), int(row.start), int(row.end))}</div>"
                        f"<div class='sg-muted'>{row.room_id} · {room.capacity if room else '-'}석</div></div>",
                        unsafe_allow_html=True)
-        slots = evaluate_slots(ds, S.schedule, S.settings, S.requests, code)
-        facts = course_facts(ds, S.schedule, S.settings, S.requests, per_course, code, slots)
+        if preview:
+            warn_box(f"⚠️ ②에서 고른 시험 시간({minutes_text(dur_new)})이 아직 저장되지 않았습니다. "
+                     "저장하거나 '원래대로'를 누른 뒤 확정해 주세요.")
+        slots_e = evaluate_slots(ds, S.schedule, S.settings, S.requests, sel)
+        facts = course_facts(ds, S.schedule, S.settings, S.requests, per_course, sel, slots_e)
+        if use_ai:
+            use_ai = st.toggle("AI 문장으로 설명 보기", value=True,
+                               help="계산된 수치만 Claude에게 넘겨 자연스러운 문장으로 바꿉니다. 끄면 템플릿 문장을 씁니다.")
         txt, src = reason_text(facts)
         reason_box(html.escape(txt).replace("**", "") if src.startswith("AI") else
                    txt.replace("**", "<b>", 1).replace("**", "</b>", 1))
         for wmsg in facts["warnings"]:
             warn_box("⚠️ " + html.escape(wmsg))
-        req = S.requests.get(code)
-        if req and not req.is_empty():
-            st.markdown("<div class='sg-muted'>적용 중인 추가 조건: " + " · ".join(html.escape(x) for x in req.describe())
+        req0 = S.requests.get(sel)
+        if req0 and not req0.is_empty():
+            st.markdown("<div class='sg-muted'>적용 중인 추가 조건: " + " · ".join(html.escape(x) for x in req0.describe())
                         + "</div>", unsafe_allow_html=True)
         st.caption(f"설명 방식: {src}")
 
-        b1, b2, b3, _ = st.columns([1.1, 1.3, 1.2, 2])
-        if not confirmed:
-            ok_conf, why = state.can_confirm(code)
-            if b1.button("✅ 확정", key=f"conf_{code}", type="primary", width="stretch", disabled=not ok_conf):
-                state.confirm(code)
+        b1, b2, _ = st.columns([1.4, 1.4, 2])
+        if not confirmed_sel:
+            ok_conf, why = state.can_confirm(sel)
+            if b1.button("✅ 이 일정으로 확정", key=f"conf_{sel}", type="primary", width="stretch",
+                         disabled=not ok_conf or preview):
+                state.confirm(sel)
                 if S.settings.notify_mode == NOTIFY_INSTANT or S.published_at:
                     st.toast(f"{c.name} 시험을 확정했습니다. 수강생 {c.enrollment}명에게 알림을 보냈습니다.", icon="📨")
                 else:
                     st.toast(f"{c.name} 시험을 확정했습니다. 관리자가 전체 일정을 발표하면 수강생에게 알림이 갑니다.", icon="✅")
                 st.rerun()
-            if b2.button("✏️ 조건 바꾸기", key=f"edit_{code}", width="stretch"):
-                S.edit_code = code
+            mine = [x for x in S.change_log if x["prof"] == pid and x["code"] == sel]
+            if mine and b2.button("↩️ 방금 바꾼 것 되돌리기", key=f"undo_{sel}", width="stretch",
+                                  help=f"“{mine[-1]['text']}” 이전 일정으로 돌아갑니다."):
+                undo(mine[-1])
                 st.rerun()
             if not ok_conf:
                 st.caption("🔒 " + why)
         else:
-            published = state.is_published(code)
+            published = state.is_published(sel)
             b1.markdown(f"<div style='padding-top:8px'>{badge('학생 발표 완료' if published else '확정 · 발표 대기', 'ok')}</div>",
                         unsafe_allow_html=True)
-            if not published and b3.button("확정 취소", key=f"unconf_{code}", width="stretch",
+            if not published and b2.button("확정 취소", key=f"unconf_{sel}", width="stretch",
                                            help="확정을 풀면 다음 재배정에서 이 시험이 바뀔 수 있습니다."):
-                state.unconfirm(code)
+                state.unconfirm(sel)
                 st.rerun()
 
-        with st.expander("🔍 변경 영향 분석 · 대안 시간"):
-            imp = impact_facts(facts, slots, S.settings)
-            itxt = template_impact(imp)
-            key = "impact:" + json.dumps(imp, ensure_ascii=False, sort_keys=True, default=str)
-            if key in S.llm_cache:
-                itxt = S.llm_cache[key]
-            elif use_ai and st.button("🤖 AI로 영향 설명 듣기", key=f"imp_{code}"):
-                try:
-                    with st.spinner("AI가 영향 분석을 정리하는 중…"):
-                        itxt = llm_impact(imp)
-                    S.llm_cache[key] = itxt
-                except llm.LLMError:
-                    st.caption("AI 호출에 실패해 기본 문장으로 보여 드립니다.")
-            st.markdown(f"<div class='sg-reason'>{html.escape(itxt)}</div>", unsafe_allow_html=True)
-            if imp["alternatives"]:
-                st.dataframe(pd.DataFrame([{
-                    "대안": a["rank"], "일시": a["when"], "강의실": a["room"], "충돌 학생": 0,
-                    "하루 3과목 이상": a["overload_students"], "연속 시험": a["consecutive_students"],
-                    "선호 반영": "-" if a["preference_met"] is None else ("예" if a["preference_met"] else "아니오")}
-                    for a in imp["alternatives"]]), hide_index=True, width="stretch")
-                if not confirmed:
-                    alt_cols = st.columns(len(imp["alternatives"]))
-                    for i, a in enumerate(imp["alternatives"]):
-                        d, s0, e0 = a["_slot"]
-                        if alt_cols[i].button(f"대안 {i + 1}로 옮기기", key=f"alt_{code}_{i}", width="stretch"):
-                            S.edit_code = code
-                            S.pending[code] = dict(
-                                req=validate_request({"allowed": [{"day": S.settings.day_name(d), "start": min_to_hm(s0),
-                                                                   "end": min_to_hm(e0)}],
-                                                      "summary": f"{a['when']}로 이동"}, source="대안 선택"),
-                                mode="대안 선택", note=None, text=f"대안 {i + 1}({a['when']})로 옮기기", all=False)
-                            st.rerun()
+# 다른 담당 과목 진행 상황 (한눈에)
+if len(exam_codes) > 1:
+    rows_o = []
+    for oc in exam_codes:
+        r0 = state.exam_row(oc)
+        rows_o.append({"과목": cm[oc].name, "시험 시간": minutes_text(exam_len(cm[oc])),
+                       "일정": state.slot_text(int(r0.day), int(r0.start), int(r0.end)) if r0 is not None else "-",
+                       "강의실": r0.room_id if r0 is not None else "-",
+                       "상태": "확정" if oc in S.confirmed else "미확정"})
+    st.markdown("**내 담당 과목 전체** <span class='sg-muted'>(다른 과목은 ①에서 눌러 고르세요)</span>", unsafe_allow_html=True)
+    st.dataframe(pd.DataFrame(rows_o), hide_index=True, width="stretch")
 
 # ---------------------------------------------------------------------------
-# 자연어 수정 → 변환 확인 → 재배정
+# 더 많은 기능: 말로 조건 바꾸기(AI) · 다른 시간 추천 · 변경 전/후 비교
 # ---------------------------------------------------------------------------
-editable = [c for c in my_codes if cm[c].exam_type != EXAM_NONE and c not in S.confirmed]
-st.markdown("### 말로 조건 바꾸기")
-if not editable:
-    st.info("수정할 수 있는 시험이 없습니다. (모두 확정되었거나 시험 없음 과목)")
-else:
-    with st.container(border=True):
-        cur = S.get("edit_code")
+st.markdown("### 더 많은 기능")
+st.caption("위 네 단계만으로 충분합니다. 조건이 복잡하면 아래 기능을 이용하세요.")
+
+if row is not None:
+    with st.expander("🔍 다른 시간 추천 · 바꾸면 학생에게 생기는 영향"):
+        imp = impact_facts(facts, slots_e, S.settings)
+        itxt = template_impact(imp)
+        key = "impact:" + json.dumps(imp, ensure_ascii=False, sort_keys=True, default=str)
+        if key in S.llm_cache:
+            itxt = S.llm_cache[key]
+        elif use_ai and st.button("🤖 AI로 영향 설명 듣기", key=f"imp_{sel}"):
+            try:
+                with st.spinner("AI가 영향 분석을 정리하는 중…"):
+                    itxt = llm_impact(imp)
+                S.llm_cache[key] = itxt
+            except llm.LLMError:
+                st.caption("AI 호출에 실패해 기본 문장으로 보여 드립니다.")
+        st.markdown(f"<div class='sg-reason'>{html.escape(itxt)}</div>", unsafe_allow_html=True)
+        if imp["alternatives"]:
+            st.dataframe(pd.DataFrame([{
+                "대안": a["rank"], "일시": a["when"], "강의실": a["room"], "충돌 학생": 0,
+                "하루 3과목 이상": a["overload_students"], "연속 시험": a["consecutive_students"],
+                "선호 반영": "-" if a["preference_met"] is None else ("예" if a["preference_met"] else "아니오")}
+                for a in imp["alternatives"]]), hide_index=True, width="stretch")
+            if not confirmed_sel:
+                alt_cols = st.columns(len(imp["alternatives"]))
+                for i, a in enumerate(imp["alternatives"]):
+                    d, s0, e0 = a["_slot"]
+                    if alt_cols[i].button(f"대안 {i + 1}로 옮기기", key=f"alt_{sel}_{i}", width="stretch"):
+                        S.edit_code = sel
+                        S.pending[sel] = dict(
+                            req=validate_request({"allowed": [{"day": S.settings.day_name(d), "start": min_to_hm(s0),
+                                                               "end": min_to_hm(e0)}],
+                                                  "summary": f"{a['when']}로 이동"}, source="대안 선택"),
+                            mode="대안 선택", note=None, text=f"대안 {i + 1}({a['when']})로 옮기기", all=False)
+                        st.rerun()
+
+editable = [x for x in my_codes if cm[x].exam_type != EXAM_NONE and x not in S.confirmed]
+with st.expander("💬 말로 조건 바꾸기 (예: 목요일 오후는 안 돼요)", expanded=bool(S.pending)):
+    if not editable:
+        st.info("수정할 수 있는 시험이 없습니다. (모두 확정되었거나 시험 없음 과목)")
+    else:
+        cur = S.get("edit_code") or sel
         idx = editable.index(cur) if cur in editable else 0
-        code = st.selectbox("수정할 과목", editable, index=idx, format_func=lambda x: f"{cm[x].name} ({x})")
+        code = st.selectbox("바꿀 과목", editable, index=idx, format_func=lambda x: f"{cm[x].name} ({x})")
         S.edit_code = code
         c = cm[code]
         row = state.exam_row(code)
@@ -399,7 +548,7 @@ else:
                            "<br>".join(html.escape(x) for x in req.describe()))
             if req.unsupported:
                 warn_box("처리하지 못한 부분: " + html.escape(" / ".join(req.unsupported)))
-            with st.expander("구조화된 조건(JSON) 보기"):
+            if st.toggle("구조화된 조건(JSON) 보기", key=f"json_{code}"):
                 st.code(json.dumps(req.to_dict(), ensure_ascii=False, indent=2), language="json")
             y, n, _ = st.columns([1.4, 1, 3])
             go_btn = y.button("✅ 이 조건으로 재배정", type="primary", disabled=req.is_empty(), width="stretch")
@@ -409,22 +558,15 @@ else:
             if go_btn:
                 targets = [code] + ([x for x in editable if x != code] if pend.get("all") else [])
                 if apply_request(code, req, text=pend["text"], mode=pend["mode"], targets=targets):
+                    S.pop(f"dur_{code}", None)   # 시험 시간이 바뀌었을 수 있으니 버튼 값을 새로 맞춘다
                     st.toast("재배정 완료", icon="✅")
                     st.rerun()
-                err = S.pop("move_error", None)
-                if err:
-                    st.error(f"**재배정 실패 — {err[0]}**. 기존 일정은 그대로 유지됩니다.")
-                    for m in err[1]:
-                        st.markdown(f"- {m}")
+                show_move_error()
 
-# ---------------------------------------------------------------------------
-# 변경 전/후 비교
-# ---------------------------------------------------------------------------
 logs = [x for x in S.change_log if x["prof"] == pid]
 if logs:
     lg = logs[-1]
-    st.markdown("### 변경 전 / 후 비교")
-    with st.container(border=True):
+    with st.expander("🔁 마지막 변경 전 / 후 비교"):
         st.markdown(f"<div class='sg-muted'>{lg['time']} · 요청 “{html.escape(lg['text'])}” → "
                     f"{html.escape(lg['summary'] or '')} ({lg['mode']}) · 재배정 {lg['solve_time']:.1f}초</div>",
                     unsafe_allow_html=True)
@@ -460,14 +602,6 @@ if logs:
             st.caption("함께 조정된 다른 과목: " + ", ".join(
                 f"{cm[x].name}({state.slot_text(int(b.loc[x, 'day']), int(b.loc[x, 'start']), with_date=False)} → "
                 f"{state.slot_text(int(a.loc[x, 'day']), int(a.loc[x, 'start']), with_date=False)})" for x in others))
-        if lg["code"] in a.index and lg["code"] not in S.confirmed:
-            st.markdown("<div class='sg-muted'>새 일정이 마음에 들면 위의 과목 카드에서 <b>확정</b>을 눌러 주세요. "
-                        "확정하면 수강생에게 알림이 갑니다.</div>", unsafe_allow_html=True)
         if st.button("↩️ 변경 전으로 되돌리기", key="undo"):
-            S.schedule = lg["before"]
-            S.change_log = [x for x in S.change_log if x is not lg]
-            S.requests = dict(lg["before_reqs"])
-            if lg.get("before_minutes") and cm[lg["code"]].exam_minutes != lg["before_minutes"]:
-                S.ds = S.ds.with_course_update(lg["code"], exam_minutes=int(lg["before_minutes"]))
-            S.report = None
+            undo(lg)
             st.rerun()
