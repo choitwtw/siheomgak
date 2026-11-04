@@ -8,6 +8,9 @@ on:
       attempts:
         description: "재시도 횟수"
         default: "3"
+      url:
+        description: "점검할 앱 주소 (비우면 기본 주소)"
+        default: "https://siheomgak.streamlit.app/"
 
 concurrency:
   group: keep-awake
@@ -23,7 +26,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install playwright && python -m playwright install --with-deps chromium
-      - run: python scripts/keep_awake.py https://siheomgak.streamlit.app/
+      - run: python scripts/keep_awake.py "${{ inputs.url || 'https://siheomgak.streamlit.app/' }}"
         env:
           KEEP_AWAKE_ATTEMPTS: ${{ inputs.attempts || '3' }}
       - if: failure()

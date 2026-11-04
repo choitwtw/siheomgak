@@ -13,7 +13,7 @@ import urllib.request
 
 from playwright.sync_api import sync_playwright
 
-URL = sys.argv[1] if len(sys.argv) > 1 else "https://siheomgak.streamlit.app/"
+URL = (sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] else "https://siheomgak.streamlit.app").rstrip("/") + "/"
 READY = "학과 우선순위"            # 관리자 대시보드가 다 그려지면 보이는 문구
 BROKEN = "Importing a module script failed"   # 위젯 파일을 못 받으면 화면에 뜨는 오류
 WAKE = re.compile(r"back up|wake", re.I)   # 잠든 앱 화면의 'Yes, get this app back up!' 버튼
