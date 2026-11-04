@@ -24,14 +24,25 @@ def get(url):
         return type(e).__name__, time.time() - t
 
 
-status, _ = get(BASE)
-print("index", status)
-html = urllib.request.urlopen(urllib.request.Request(BASE, headers=UA), timeout=60).read().decode()
+html = ""
+for i in range(8):                       # 첫 화면을 받을 때까지 (실패도 기록)
+    t = time.time()
+    try:
+        with urllib.request.urlopen(urllib.request.Request(BASE + f"?i={i}", headers=UA), timeout=60) as r:
+            html = r.read().decode()
+            print(f"index {i}: {r.status} {time.time() - t:.1f}초")
+            break
+    except Exception as e:  # noqa: BLE001
+        print(f"index {i}: {getattr(e, 'code', type(e).__name__)} {time.time() - t:.1f}초")
 files = sorted(set(re.findall(r'(?:src|href)="\./(static/[^"]+\.(?:js|css))"', html)))
 print("index.html 이 바로 받는 파일:", len(files))
 if not files:
     print(html[:500])
     sys.exit(1)
+
+# 한 번에 하나씩: 요청마다 결과와 걸린 시간
+seq = [get(BASE + f + f"?s={time.time():.0f}") for f in files[:20]]
+print("하나씩 20개:", [f"{s}/{d:.1f}s" for s, d in seq])
 
 for workers in (1, 4, 16, 64):
     for rnd in range(3):
