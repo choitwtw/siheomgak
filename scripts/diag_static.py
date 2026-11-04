@@ -15,7 +15,7 @@ UA = {"User-Agent": "Mozilla/5.0 (siheomgak keep-awake diagnostic)"}
 def get(url):
     t = time.time()
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=60) as r:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=20) as r:
             r.read()
             return r.status, time.time() - t
     except urllib.error.HTTPError as e:
@@ -41,11 +41,11 @@ if not files:
     sys.exit(1)
 
 # 한 번에 하나씩: 요청마다 결과와 걸린 시간
-seq = [get(BASE + f + f"?s={time.time():.0f}") for f in files[:20]]
-print("하나씩 20개:", [f"{s}/{d:.1f}s" for s, d in seq])
+seq = [get(BASE + f + f"?s={time.time():.0f}") for f in files[:12]]
+print("하나씩 12개:", [f"{s}/{d:.1f}s" for s, d in seq])
 
-for workers in (1, 4, 16, 64):
-    for rnd in range(3):
+for workers in (1, 8, 40):
+    for rnd in range(2):
         urls = [BASE + f + f"?d={workers}-{rnd}-{time.time():.0f}" for f in files]   # 매번 새 요청 (캐시 피함)
         t = time.time()
         with ThreadPoolExecutor(workers) as ex:
