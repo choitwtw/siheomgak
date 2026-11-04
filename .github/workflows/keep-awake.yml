@@ -2,16 +2,20 @@ name: 앱 깨워 두기
 
 on:
   schedule:
-    - cron: "17 */6 * * *"   # 6시간마다 (UTC)
+    - cron: "23 * * * *"   # 매시간 (GitHub 예약 실행은 밀리거나 빠질 수 있어 여유 있게)
   workflow_dispatch:
+
+concurrency:
+  group: keep-awake
+  cancel-in-progress: false
 
 jobs:
   visit:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: pip install playwright==1.47.0 && python -m playwright install --with-deps chromium
