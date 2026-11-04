@@ -17,6 +17,7 @@
   패키지 고정·세션 공유·Reboot app 모두 효과 없음(keep-awake #14~#25 실패). 배포 로그엔 오류 없음, 같은 Python 3.12 환경으로 로컬 재현 안 됨.
   **최종 조치(11/04)**: Streamlit을 1.66.1 → **1.56.0**(Tornado 웹 서버를 쓰는 마지막 버전)으로 고정. 1.57부터 uvicorn/starlette 서버라서 그 경로를 통째로 피함.
   1.56 호환을 위해 교수 화면 선택을 segmented_control → 일반 버튼 줄로, 시간표 위젯은 그릴 때마다 등록. Streamlit을 올리기 전에는 배포에서 꼭 확인할 것.
+  **1.56으로 바꿔도 #26·#27 실패**(04:12 UTC, 첫 화면 `~/+/`·static js 500, health는 정상) → 웹 서버 종류와 무관한 Streamlit Cloud 쪽 문제로 결론. 사용자에게 앱 삭제 후 같은 주소로 재배포 권함.
 - 다시 이런 증상이 나면: share.streamlit.io → siheomgak → ⋮ → **Reboot app**, Manage app의 로그 확인.
 - `requirements.txt`를 바꾸면 Streamlit Cloud가 패키지를 다시 설치·재시작함.
 
