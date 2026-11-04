@@ -5,16 +5,19 @@ Streamlit Community Cloud 는 12시간 동안 방문이 없으면 앱을 재운�
 GitHub 예약 실행은 몇 시간씩 밀리거나 빠지기도 해서 매시간 돌리고, 잠든 앱은 깨어날 때까지 기다린다.
 실행: python scripts/keep_awake.py [앱 주소]   (playwright 필요)
 """
+import os
 import re
 import sys
 import time
+import urllib.request
 
 from playwright.sync_api import sync_playwright
 
 URL = sys.argv[1] if len(sys.argv) > 1 else "https://siheomgak.streamlit.app/"
 READY = "학과 우선순위"            # 관리자 대시보드가 다 그려지면 보이는 문구
 WAKE = re.compile(r"back up|wake", re.I)   # 잠든 앱 화면의 'Yes, get this app back up!' 버튼
-ATTEMPTS, WAIT_SEC = 3, 240
+ATTEMPTS = int(os.environ.get("KEEP_AWAKE_ATTEMPTS", 3))
+WAIT_SEC = int(os.environ.get("KEEP_AWAKE_WAIT", 240))
 
 
 def page_text(page) -> str:
@@ -65,7 +68,17 @@ with sync_playwright() as p:
     if not ok:   # 무엇이 보였는지 남긴다 (Actions 실행 결과의 artifact)
         page.screenshot(path="keep_awake.png", full_page=True)
         print("프레임:", [f.url for f in page.frames])
-        print("버튼:", [b.inner_text() for f in page.frames for b in f.locator("button").all()][:20])
+        for f in page.frames:
+            try:
+                print("--", f.url, "\n", re.sub(r"\s+", " ", f.content())[:1500])
+            except Exception as e:
+                print("--", f.url, e)
+        for path in ("~/+/_stcore/health", "~/+/healthz", "api/v2/app/status"):
+            try:
+                with urllib.request.urlopen(URL + path, timeout=30) as r:
+                    print("health", path, r.status, r.read(300))
+            except Exception as e:
+                print("health", path, e)
     browser.close()
 
 print("상태:", "정상" if ok else "확인 필요")
