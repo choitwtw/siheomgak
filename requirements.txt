@@ -5,3 +5,9 @@ pandas==3.1.0
 plotly==7.1.0
 anthropic==2.3.0
 pytest==9.1.1
+# Streamlit 웹 서버 관련 패키지는 정상 동작을 확인한 버전으로 고정 (배포 환경이 새 버전을 받아 생기는 문제 방지)
+starlette==1.10.0
+uvicorn==0.54.0
+anyio==4.15.1
+websockets==17.3
+python-multipart==0.0.32
