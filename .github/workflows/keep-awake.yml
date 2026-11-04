@@ -4,6 +4,10 @@ on:
   schedule:
     - cron: "23 * * * *"   # 매시간 (GitHub 예약 실행은 밀리거나 빠질 수 있어 여유 있게)
   workflow_dispatch:
+    inputs:
+      attempts:
+        description: "재시도 횟수"
+        default: "3"
 
 concurrency:
   group: keep-awake
@@ -18,8 +22,10 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install playwright==1.47.0 && python -m playwright install --with-deps chromium
+      - run: pip install playwright && python -m playwright install --with-deps chromium
       - run: python scripts/keep_awake.py https://siheomgak.streamlit.app/
+        env:
+          KEEP_AWAKE_ATTEMPTS: ${{ inputs.attempts || '3' }}
       - if: failure()
         uses: actions/upload-artifact@v4
         with:

@@ -47,6 +47,9 @@ ok, text = False, ""
 with sync_playwright() as p:
     browser = p.chromium.launch()
     page = browser.new_page()
+    errors = []
+    page.on("console", lambda m: errors.append(m.text[:200]) if m.type == "error" else None)
+    page.on("pageerror", lambda e: errors.append(str(e)[:200]))
     for attempt in range(1, ATTEMPTS + 1):
         try:
             page.goto(URL, wait_until="domcontentloaded", timeout=120_000)
@@ -73,6 +76,14 @@ with sync_playwright() as p:
                 print("--", f.url, "\n", re.sub(r"\s+", " ", f.content())[:1500])
             except Exception as e:
                 print("--", f.url, e)
+        print("콘솔 오류:", errors[:10])
+        try:
+            with urllib.request.urlopen("https://qjmnz4vd2y07.statuspage.io/api/v2/incidents/unresolved.json", timeout=30) as r:
+                import json
+                for inc in json.load(r).get("incidents", []):
+                    print("Streamlit 장애:", inc.get("name"), inc.get("status"), inc.get("started_at"))
+        except Exception as e:
+            print("status page", e)
         for path in ("~/+/_stcore/health", "~/+/healthz", "api/v2/app/status"):
             try:
                 with urllib.request.urlopen(URL + path, timeout=30) as r:
