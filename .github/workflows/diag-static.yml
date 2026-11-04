@@ -1,0 +1,19 @@
+name: 화면 파일 진단
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "앱 주소"
+        default: "https://siheomgak.streamlit.app/"
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python scripts/diag_static.py "${{ inputs.url }}"
