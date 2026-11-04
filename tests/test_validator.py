@@ -37,11 +37,14 @@ def test_detects_student_overlap(tiny):
     assert rep.metrics["conflict_students"] == 2
 
 
-def test_detects_overlap_with_running_class(tiny):
+def test_no_classes_during_exam_week_except_general(tiny):
+    """시험 주간에는 수업이 없다: 시험 없음 과목(B2, 화 13:30 수업) 시간에 시험을 둬도 충돌이 아니다.
+    다만 다른 단과대 교양 과목은 그쪽 시험이 수업 시간에 있을 수 있어 여전히 막는다."""
     rows = good_rows()
-    rows[1] = ("A2", 1, "13:00", "14:00", "R30", "별도")  # B2(시험 없음) 화 13:30 수업과 겹침 (S1, S3)
-    rep = validate(tiny, sched(rows), ST)
-    assert rep.by_rule()["H1"] == 2
+    rows[1] = ("A2", 1, "13:00", "14:00", "R30", "별도")  # B2 화 13:30 수업 시간과 겹침 (수강생 S1, S3)
+    assert validate(tiny, sched(rows), ST).by_rule()["H1"] == 0
+    general = tiny.with_course_update("B2", department="교양")
+    assert validate(general, sched(rows), ST).by_rule()["H1"] == 2
 
 
 def test_detects_professor_rules(tiny):

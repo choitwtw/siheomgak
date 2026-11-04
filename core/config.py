@@ -35,7 +35,9 @@ DAY_FULL: dict[str, str] = {d: d + "요일" for d in DAYS}
 # ---- 시험 방식 ----
 EXAM_IN_CLASS = "수업시간"   # (a) 정규 수업 시간·강의실 고정
 EXAM_SEPARATE = "별도"       # (b) 알고리즘이 시간·강의실 배정
-EXAM_NONE = "없음"           # (c) 과제 대체, 정규 수업 계속 진행
+EXAM_NONE = "없음"           # (c) 과제 대체 (시험 주간에는 수업도 없음)
+# 시험 주간에는 정규 수업을 하지 않는다. 다만 다른 단과대 교양 과목은 그쪽 시험이 수업 시간에 있을 수 있어 그 시간을 막아 둔다.
+CLASSES_IN_EXAM_WEEK = False
 EXAM_TYPES = [EXAM_IN_CLASS, EXAM_SEPARATE, EXAM_NONE]
 EXAM_TYPE_LABEL = {
     EXAM_IN_CLASS: "수업시간 시험",

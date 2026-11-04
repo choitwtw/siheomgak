@@ -210,7 +210,7 @@ def warnings_for(f: dict) -> list[str]:
 
 def template_reason(f: dict) -> str:
     if not f.get("has_exam"):
-        return "시험이 없는 과목입니다(과제 대체). 시험 주간에도 정규 수업이 진행됩니다."
+        return "시험이 없는 과목입니다(과제 대체). 시험 주간에는 수업도 없습니다."
     when = f"{f['date']} {f['start']}"
     bits = [f"수강생 {f['enrollment']}명 전원 이 시간 충돌 없음",
             f"하루 3과목 이상 학생 {f['overload_students']}명",
@@ -285,7 +285,7 @@ def llm_impact(imp: dict) -> str:
 def busy_map(ds: Dataset, schedule: pd.DataFrame, settings: Settings,
              requests: dict[str, CourseRequest], code: str, cell: int = SLOT_MINUTES) -> list[dict]:
     """시험 기간을 cell 분 단위 칸으로 나눠, 칸마다 이 과목 수강생 중 바쁜 학생 수와 교수 사정을 센다.
-    (다른 과목의 배정된 시험·진행 중인 수업·교양 수업이 모두 '바쁨'이다. 이 과목 자신의 시험은 제외)"""
+    (다른 과목의 배정된 시험과 다른 단과대 교양 수업 시간이 '바쁨'이다. 이 과목 자신의 시험은 제외)"""
     c = ds.course_map[code]
     others = schedule[schedule.course_code != code]
     items = week_items(ds, others, settings)

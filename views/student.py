@@ -2,7 +2,7 @@
 
 - 교수가 아직 확정하지 않은 시험: 현재 배정안을 '예상' 시간으로 (점선, 바뀔 수 있음)
 - 교수가 확정한 시험: '확정' 시간으로 (남색)
-- 시험이 없는 과목·교양 수업은 시험 기간에도 진행되므로 회색으로 함께 표시
+- 시험 주간에는 수업이 없다. 다른 단과대 교양 과목만 그쪽 시험이 있을 수 있는 수업 시간을 회색으로 표시
 관리자가 발표하면 받은 알림은 시간표 아래에 접어서 보여 준다.
 """
 from __future__ import annotations
@@ -66,7 +66,7 @@ events, rows = [], []
 for code in codes:
     c = cm[code]
     if c.exam_type == EXAM_NONE:
-        label = "교양 수업" if c.dept == GENERAL_DEPT else "정규 수업 (시험 없음)"
+        label = "다른 단과대 교양 (그쪽 시험 시간일 수 있음)" if c.dept == GENERAL_DEPT else "정규 수업"
         for d, s0, e0 in stg.class_blocks(c):
             events.append(dict(day=d, start=s0, end=e0, cls="general" if c.dept == GENERAL_DEPT else "class",
                                title=c.name, sub=f"{label} · {c.room}"))
@@ -87,8 +87,7 @@ with st.container(border=True):
     st.markdown(f"#### 시험 기간 시간표 · {stg.period_label()}")
     st.markdown(legend([("background:#1C2E5A", "확정된 시험"),
                         ("background:#EEF2FF;border:1.5px dashed #3B5BDB", "예상 시험 (교수 확정 전, 바뀔 수 있음)"),
-                        ("background:#E9ECF2;border:1px solid #D8DDE8", "정규 수업"),
-                        ("background:#F4F4F6;border:1px solid #DDDFE5", "교양 수업")]),
+                        ("background:#F4F4F6;border:1px solid #DDDFE5", "다른 단과대 교양 수업 시간")]),
                 unsafe_allow_html=True)
     st.markdown(week_grid(stg, events, px_per_min=1.2, min_event_px=34), unsafe_allow_html=True)
 

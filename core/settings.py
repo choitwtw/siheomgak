@@ -10,7 +10,8 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from functools import cached_property
 
-from .config import DEFAULT_DAY_END, DEFAULT_DAY_START, DEFAULT_TIME_LIMIT_SEC, WEEKDAYS
+from .config import (CLASSES_IN_EXAM_WEEK, DEFAULT_DAY_END, DEFAULT_DAY_START, DEFAULT_TIME_LIMIT_SEC, GENERAL_DEPT,
+                     WEEKDAYS)
 from .priority import parse_semester
 from .timeutil import hm_to_min
 
@@ -79,7 +80,11 @@ class Settings:
 
     # ---- 요일로 적힌 정보 → 시험일 ----
     def class_blocks(self, c) -> list[tuple[int, int, int]]:
-        """과목 c 의 정규 수업 중 시험 기간에 있는 회차: (시험일, 시작, 종료)"""
+        """과목 c 의 정규 수업 중 시험 기간에 실제로 진행되는(=학생·교수·강의실을 막는) 회차: (시험일, 시작, 종료).
+        시험 주간에는 수업을 하지 않으므로 우리 단과대 과목은 없음. 다른 단과대 교양 과목은 그쪽 시험이
+        수업 시간에 있을 수 있어 그대로 막아 둔다."""
+        if not CLASSES_IN_EXAM_WEEK and c.dept != GENERAL_DEPT:
+            return []
         return [(k, c.start, c.end) for k in range(self.n_days) if self.weekday(k) in c.days]
 
     def in_class_options(self, c) -> list[tuple[int, int, int]]:

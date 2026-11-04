@@ -228,7 +228,7 @@ say(f"<b>{html.escape(csel.name)}</b> · 수강생 {csel.enrollment}명 · {EXAM
        if row_sel is not None else ""))
 if no_exam:
     st.caption("시험 없음(과제 대체) 과목: " + ", ".join(cm[x].name for x in no_exam)
-               + " — 시험 기간에도 정규 수업이 진행되어, 수강생은 그 시간에 다른 시험을 볼 수 없습니다.")
+               + " — 시험 주간에는 수업이 없으므로 따로 정할 일정이 없습니다.")
 
 # ---------------------------------------------------------------------------
 # ② 시험 시간 정하기
