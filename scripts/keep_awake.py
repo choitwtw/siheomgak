@@ -62,6 +62,10 @@ with sync_playwright() as p:
         if ok:
             break
         print(f"{attempt}회차: 앱이 아직 뜨지 않아 다시 시도합니다.")
+    if not ok:   # 무엇이 보였는지 남긴다 (Actions 실행 결과의 artifact)
+        page.screenshot(path="keep_awake.png", full_page=True)
+        print("프레임:", [f.url for f in page.frames])
+        print("버튼:", [b.inner_text() for f in page.frames for b in f.locator("button").all()][:20])
     browser.close()
 
 print("상태:", "정상" if ok else "확인 필요")

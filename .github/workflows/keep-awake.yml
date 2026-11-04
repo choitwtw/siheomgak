@@ -20,3 +20,9 @@ jobs:
           python-version: "3.12"
       - run: pip install playwright==1.47.0 && python -m playwright install --with-deps chromium
       - run: python scripts/keep_awake.py https://siheomgak.streamlit.app/
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: keep-awake-screenshot
+          path: keep_awake.png
+          retention-days: 3
