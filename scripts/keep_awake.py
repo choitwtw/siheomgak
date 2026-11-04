@@ -50,6 +50,8 @@ with sync_playwright() as p:
     errors = []
     page.on("console", lambda m: errors.append(m.text[:200]) if m.type == "error" else None)
     page.on("pageerror", lambda e: errors.append(str(e)[:200]))
+    bad = []
+    page.on("response", lambda r: bad.append(f"{r.status} {r.url[:150]}") if r.status >= 400 else None)
     for attempt in range(1, ATTEMPTS + 1):
         try:
             page.goto(URL, wait_until="domcontentloaded", timeout=120_000)
@@ -77,6 +79,7 @@ with sync_playwright() as p:
             except Exception as e:
                 print("--", f.url, e)
         print("콘솔 오류:", errors[:10])
+        print("실패한 요청:", sorted(set(bad))[:15])
         try:
             with urllib.request.urlopen("https://qjmnz4vd2y07.statuspage.io/api/v2/incidents/unresolved.json", timeout=30) as r:
                 import json
