@@ -14,9 +14,9 @@
 ## 배포 운영 (중요)
 - `.github/workflows/keep-awake.yml`: 매시간 앱을 방문해 잠들지 않게 함(`scripts/keep_awake.py`). 관리자·교수·학생 화면을 열어 위젯 오류까지 검사하고, 실패하면 GitHub가 메일을 보냄. 결과 확인: `gh run list --repo choitwtw/siheomgak --workflow keep-awake.yml`
 - 2026-11-03~04 장애: 배포 앱이 정적 파일(`~/+/static/js`)에 500을 내며 무한 로딩·위젯 오류("Importing a module script failed").
-  조치: ① `requirements.txt`에 웹 서버 패키지(starlette·uvicorn·anyio·websockets·python-multipart) 버전 고정
-  ② 첫 배정·무작위 비교 지표를 `st.cache_resource`로 세션 간 공유(`ui/state.py`) ③ CP-SAT 작업자 4개 고정.
-  **그래도 11/04 02:00 UTC 기준 keep-awake #14~#24 모두 실패**(health는 정상, static js 500). 로컬 재현 안 됨 → Streamlit Cloud 쪽 문제로 보고 사용자에게 Reboot app 요청함. 다음 세션은 먼저 최신 실행 결과부터 확인할 것.
+  패키지 고정·세션 공유·Reboot app 모두 효과 없음(keep-awake #14~#25 실패). 배포 로그엔 오류 없음, 같은 Python 3.12 환경으로 로컬 재현 안 됨.
+  **최종 조치(11/04)**: Streamlit을 1.66.1 → **1.56.0**(Tornado 웹 서버를 쓰는 마지막 버전)으로 고정. 1.57부터 uvicorn/starlette 서버라서 그 경로를 통째로 피함.
+  1.56 호환을 위해 교수 화면 선택을 segmented_control → 일반 버튼 줄로, 시간표 위젯은 그릴 때마다 등록. Streamlit을 올리기 전에는 배포에서 꼭 확인할 것.
 - 다시 이런 증상이 나면: share.streamlit.io → siheomgak → ⋮ → **Reboot app**, Manage app의 로그 확인.
 - `requirements.txt`를 바꾸면 Streamlit Cloud가 패키지를 다시 설치·재시작함.
 

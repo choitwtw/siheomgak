@@ -55,7 +55,6 @@ st.markdown(f"""<style>
 .sg-dur .new {{ color:{ACCENT}; }}
 .stApp [data-testid="stMarkdownContainer"] p, .stApp [data-testid="stMarkdownContainer"] li {{ font-size:1.05rem; }}
 .stApp .stButton > button {{ min-height:3rem; font-size:1.05rem; padding:.6rem 1.3rem; }}
-.stApp [data-testid="stButtonGroup"] button {{ min-height:3.1rem; font-size:1.12rem; padding:.55rem 1.25rem; font-weight:700; }}
 .stApp [data-testid="stWidgetLabel"] p {{ font-size:1.05rem !important; font-weight:700; }}
 .stApp [data-baseweb="select"] > div {{ min-height:3rem; font-size:1.08rem; }}
 .sg-reason, .sg-warn {{ font-size:1.05rem !important; }}
@@ -69,6 +68,16 @@ def step(n: int, title: str, desc: str = ""):
 
 def say(text_html: str):
     st.markdown(f"<div class='sg-say'>{text_html}</div>", unsafe_allow_html=True)
+
+
+def button_row(options: list, current, key: str, fmt, state_key: str, disabled: bool = False, per_row: int = 6):
+    """큰 버튼 한 줄로 고르기. 고른 것은 진한(primary) 버튼. 누르면 S[state_key] 에 값을 넣는다."""
+    for i in range(0, len(options), per_row):
+        part = options[i:i + per_row]
+        cols = st.columns(per_row)
+        for col, o in zip(cols, part):
+            col.button(fmt(o), key=f"{key}_{o}", type="primary" if o == current else "secondary", width="stretch",
+                       disabled=disabled, on_click=S.__setitem__, args=(state_key, o))
 
 
 hero("PROFESSOR", "교수 화면",
@@ -196,11 +205,11 @@ if not exam_codes:
 # ① 과목 고르기
 # ---------------------------------------------------------------------------
 step(1, "과목 고르기", "시험 일정을 정할 과목을 누르세요.")
-sel = st.segmented_control("과목", exam_codes, default=S.get("avail_code") if S.get("avail_code") in exam_codes
-                           else exam_codes[0], format_func=lambda x: f"{cm[x].name}" + (" ✔" if x in S.confirmed else ""),
-                           key=f"avail_{pid}", label_visibility="collapsed")
-sel = sel or exam_codes[0]
-S.avail_code = sel
+if S.get("avail_code") not in exam_codes:
+    S.avail_code = exam_codes[0]
+sel = S.avail_code
+button_row(exam_codes, sel, key=f"course_{pid}", fmt=lambda x: cm[x].name + (" ✔" if x in S.confirmed else ""),
+           state_key="avail_code", per_row=min(4, max(2, len(exam_codes))))
 csel = cm[sel]
 stg = S.settings
 row_sel = state.exam_row(sel)
@@ -226,9 +235,9 @@ else:
     opts = sorted(set(EXAM_DURATION_BUTTONS) | {saved})
     if S.get(dkey) not in opts:
         S[dkey] = saved
-    choice = st.segmented_control("시험 시간", opts, key=dkey, format_func=minutes_text,
-                                  disabled=confirmed_sel, label_visibility="collapsed")
-    dur_new = int(choice or saved)
+    button_row(opts, S[dkey], key=f"durbtn_{sel}", fmt=minutes_text, state_key=dkey, disabled=confirmed_sel,
+               per_row=len(opts) if len(opts) <= 7 else 6)
+    dur_new = int(S[dkey])
     if confirmed_sel:
         st.caption("🔒 확정된 시험은 시험 시간을 바꿀 수 없습니다. 바꾸려면 ④에서 확정을 취소하세요.")
 preview = dur_new != saved   # 저장하기 전 미리 보기 중

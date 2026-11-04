@@ -62,7 +62,7 @@ def test_professor_sets_exam_duration_with_buttons():
     assert c.exam_type == "별도"                     # 기본 데이터 첫 교수의 첫 과목 (별도 시험)
     before = c.exam_minutes
     new = 60 if before != 60 else 90
-    at.session_state[f"dur_{code}"] = new
+    [btn for btn in at.button if btn.key == f"durbtn_{code}_{new}"][0].click()   # ② 시험 시간 버튼 누르기
     run(at)
     texts = " ".join(m.value for m in at.markdown)
     assert "바꾸려고 합니다" in texts and "아직 저장하지 않았습니다" in texts

@@ -264,10 +264,9 @@ export default function(component) {
 }
 """
 
-_board = st.components.v2.component("siheomgak_exam_board", css=CSS, js=JS)
-
-
 def exam_board(data: dict, key: str):
-    """보드를 그리고, 교수가 옮기기를 누르면 {day, start, room} 을 돌려준다 (그 외에는 None)."""
-    res = _board(data=data, key=key, on_move_change=lambda: None)
+    """보드를 그리고, 교수가 옮기기를 누르면 {day, start, room} 을 돌려준다 (그 외에는 None).
+    위젯 등록은 그릴 때마다 한다 (Streamlit 버전·실행 방식에 따라 모듈 import 때 한 번 등록한 것이 사라질 수 있음)."""
+    board = st.components.v2.component("siheomgak_exam_board", css=CSS, js=JS)
+    res = board(data=data, key=key, on_move_change=lambda: None)
     return getattr(res, "move", None)

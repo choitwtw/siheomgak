@@ -1,13 +1,11 @@
 # 시험각 실행에 필요한 패키지 (Streamlit Community Cloud가 배포할 때 이 파일로 설치)
-streamlit==1.66.1
+# Streamlit 1.57부터는 웹 서버가 uvicorn(starlette)으로 바뀌었는데, 11/03부터 배포 서버에서 화면 파일(static js)이
+# 계속 500 오류를 내 무한 로딩되었다. 기존 Tornado 서버를 쓰는 마지막 버전 1.56.0으로 고정한다.
+streamlit==1.56.0
+tornado==6.6
+pyarrow==24.0.0
 ortools==9.15.6755
 pandas==3.1.0
 plotly==7.1.0
 anthropic==2.3.0
 pytest==9.1.1
-# Streamlit 웹 서버 관련 패키지는 정상 동작을 확인한 버전으로 고정 (배포 환경이 새 버전을 받아 생기는 문제 방지)
-starlette==1.10.0
-uvicorn==0.54.0
-anyio==4.15.1
-websockets==17.3
-python-multipart==0.0.32
