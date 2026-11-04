@@ -12,7 +12,6 @@
 """
 from __future__ import annotations
 
-import os
 import threading
 import time
 from collections import defaultdict
@@ -393,7 +392,7 @@ class _StallWatch(cp_model.CpSolverSolutionCallback):
 def _solver(time_limit: float) -> cp_model.CpSolver:
     s = cp_model.CpSolver()
     s.parameters.max_time_in_seconds = float(time_limit)
-    s.parameters.num_workers = max(4, min(8, os.cpu_count() or 4))
+    s.parameters.num_workers = 4   # 무료 배포 서버(CPU 제한)에서도 웹 서버가 굶지 않도록 4개로 고정
     s.parameters.random_seed = 7
     return s
 

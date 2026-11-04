@@ -249,7 +249,8 @@ class Dataset:
         idx = courses.index[courses["course_code"] == code]
         for k, v in changes.items():
             courses.loc[idx, k] = v
-        return Dataset(self.students, courses, self.professors, self.rooms, self.enrollments, dict(self.meta))
+        meta = {k: v for k, v in self.meta.items() if k != "fingerprint"}   # 내용이 바뀌었으니 지문은 새로 계산
+        return Dataset(self.students, courses, self.professors, self.rooms, self.enrollments, meta)
 
 
 def exam_seats(capacity: int) -> int:

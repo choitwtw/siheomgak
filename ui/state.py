@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+from dataclasses import astuple, replace
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -116,12 +117,33 @@ def set_dataset(ds: Dataset, cfg: GenConfig | None = None):
     _reset_work()
 
 
+def _fingerprint(ds: Dataset) -> str:
+    """데이터 내용으로 만든 지문 (같은 데이터면 같은 값)."""
+    if "fingerprint" not in ds.meta:
+        ds.meta["fingerprint"] = "-".join(
+            str(int(pd.util.hash_pandas_object(df.astype(str), index=False).sum()))
+            for df in ds.tables().values())
+    return ds.meta["fingerprint"]
+
+
+@st.cache_resource(show_spinner=False, max_entries=8)
+def _shared_first_solve(key: tuple, _ds: Dataset, _settings: Settings) -> SolveResult:
+    """조건·확정이 없는 첫 배정은 접속자마다 같으므로 한 번만 풀고 모든 세션이 나눠 쓴다.
+    (무료 배포 서버에서 접속할 때마다 최적화를 다시 돌리면 화면 파일 전송까지 느려진다)"""
+    return solve(_ds, _settings, requests={}, confirmed={})
+
+
 def run_schedule(previous: pd.DataFrame | None = None, focus: set[str] | None = None,
                  dataset: Dataset | None = None, requests: dict | None = None) -> SolveResult:
     """배정 실행. 성공하면 상태에 반영, 실패하면 이전 결과를 유지하고 SolveResult 만 돌려준다."""
     d = dataset or S.ds
     reqs = S.requests if requests is None else requests
-    res = solve(d, S.settings, requests=reqs, confirmed=S.confirmed, previous=previous, focus=focus)
+    if previous is None and focus is None and not reqs and not S.confirmed:
+        res = _shared_first_solve((_fingerprint(d), astuple(S.settings)), d, S.settings)
+        if res.schedule is not None:
+            res = replace(res, schedule=res.schedule.copy())
+    else:
+        res = solve(d, S.settings, requests=reqs, confirmed=S.confirmed, previous=previous, focus=focus)
     S.result = res
     if res.ok:
         S.ds = d
@@ -146,12 +168,15 @@ def current_report() -> Report | None:
     return S.report
 
 
+@st.cache_resource(show_spinner=False, max_entries=8)
+def _shared_baseline(key: tuple, _ds: Dataset, _settings: Settings) -> dict:
+    return baseline_metrics(_ds, _settings, runs=20)
+
+
 def get_baseline() -> dict:
+    """무작위 배정 비교 지표 (데이터·설정이 같으면 모든 세션이 공유)"""
     st_ = S.settings
-    key = (S.data_version, st_.day_start, st_.day_end, tuple(st_.exam_dates))
-    if S.baseline is None or S.baseline[0] != key:
-        S.baseline = (key, baseline_metrics(S.ds, st_, runs=20))
-    return S.baseline[1]
+    return _shared_baseline((_fingerprint(S.ds), astuple(st_)), S.ds, st_)
 
 
 def exam_row(code: str):

@@ -19,3 +19,18 @@ def test_app_recovers_from_old_session_state():
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     assert type(at.session_state["settings"]).__name__ == "Settings"
+
+
+def test_first_solve_shared_between_sessions():
+    """조건 없는 첫 배정은 세션끼리 공유하고, 데이터가 바뀌면 다시 푼다"""
+    from core.datagen import generate
+    from core.settings import Settings
+    from ui import state
+    ds = generate()
+    key = (state._fingerprint(ds), __import__("dataclasses").astuple(Settings()))
+    r1 = state._shared_first_solve(key, ds, Settings())
+    r2 = state._shared_first_solve(key, ds, Settings())
+    assert r1 is r2 and r1.ok
+    first = ds.courses.iloc[0]
+    changed = ds.with_course_update(first.course_code, exam_minutes=int(first.exam_minutes) + 15)
+    assert state._fingerprint(changed) != state._fingerprint(ds)
