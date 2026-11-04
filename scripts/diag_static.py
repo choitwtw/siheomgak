@@ -41,11 +41,11 @@ if not files:
     sys.exit(1)
 
 # 한 번에 하나씩: 요청마다 결과와 걸린 시간
-seq = [get(BASE + f + f"?s={time.time():.0f}") for f in files[:12]]
-print("하나씩 12개:", [f"{s}/{d:.1f}s" for s, d in seq])
+seq = [get(BASE + f + f"?s={time.time():.0f}") for f in files[:6]]
+print("하나씩 6개:", [f"{s}/{d:.1f}s" for s, d in seq])
 
-for workers in (1, 8, 40):
-    for rnd in range(2):
+for workers in (8,):
+    for rnd in range(1):
         urls = [BASE + f + f"?d={workers}-{rnd}-{time.time():.0f}" for f in files]   # 매번 새 요청 (캐시 피함)
         t = time.time()
         with ThreadPoolExecutor(workers) as ex:
@@ -57,3 +57,20 @@ for workers in (1, 8, 40):
 
 for p in ("_stcore/health",) * 10:
     print("health", get(BASE + p))
+
+# 연결 하나를 계속 써서(keep-alive) 보낼 때도 끊기는지
+import http.client
+from urllib.parse import urlparse
+u = urlparse(BASE)
+res = []
+conn = http.client.HTTPSConnection(u.netloc, timeout=20)
+for i in range(20):
+    t = time.time()
+    try:
+        conn.request("GET", u.path + "_stcore/health", headers=UA)
+        r = conn.getresponse(); r.read()
+        res.append(f"{r.status}/{time.time() - t:.1f}s")
+    except Exception as e:  # noqa: BLE001
+        res.append(f"{type(e).__name__}/{time.time() - t:.1f}s")
+        conn.close(); conn = http.client.HTTPSConnection(u.netloc, timeout=20)
+print("연결 하나로 20번:", res)
